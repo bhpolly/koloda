@@ -18,7 +18,7 @@ function lsGet(k, d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(
 function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", modes:{choice:true, match:true, letters:true, typing:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, modes:{choice:true, match:true, letters:true, typing:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -36,7 +36,7 @@ function sanitizeSettings(s){
   if(["en","ru"].includes(s.first)) o.first=s.first;
   if(["off","en","both"].includes(s.audio)) o.audio=s.audio;
   if(+s.rate>=0.5 && +s.rate<=1.5) o.rate=+s.rate;
-  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120);
+  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone;
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -403,7 +403,7 @@ ${pairs.map((p,i)=>`${i}. ${p.en} — ${p.ru}`).join("\n")}
 Reply with ONLY a JSON array: [{"i":0,"ipa":"/.../","pos":"noun|verb|...","examples":[{"en":"...","ru":"..."},{"en":"...","ru":"..."}]}]`;
 }
 function lookupErrorText(e){
-  if(e?.code==="quota") return "Дневной лимит переводчика MyMemory исчерпан. Укажите email в настройках (лимит вырастет в 10 раз) или введите перевод вручную.";
+  if(e?.code==="quota") return "Дневной лимит бесплатного переводчика исчерпан. Укажите email в настройках, и лимит вырастет в 10 раз, или введите перевод вручную.";
   if(e?.code==="net") return "Нет связи со словарём. Проверьте интернет или введите перевод вручную.";
   if(e?.code==="none") return "Автоподбор сейчас недоступен. Введите перевод вручную ниже.";
   if(e?.code==="not_granted") return "Без разрешения на запросы к Claude подбор недоступен. Введите перевод вручную.";
@@ -791,8 +791,8 @@ function renderLearn(){
   }
   const fresh=cs.filter(c=>!c.box).length, due=cs.filter(isDue).length, n=Math.min(S().batch, fresh);
   const st=streakInfo(), today=Store.stats.days?.[dayKey()];
-  const cta = due ? `<button class="btn primary" data-start="review">Повторить · ${due}</button>${fresh?`<button class="btn ghost" data-start="learn">Учить новые</button>`:""}`
-            : fresh ? `<button class="btn primary" data-start="learn">Начать обучение · ${n}</button>`
+  const cta = due ? `<button class="btn primary" data-start="review">Повторить</button>${fresh?`<button class="btn ghost" data-start="learn">Учить новые</button>`:""}`
+            : fresh ? `<button class="btn primary" data-start="learn">Начать обучение</button>`
             : `<button class="btn primary" data-go="words">Добавить слово</button>`;
   el.innerHTML = heroHtml(cta) + `
   <div class="sec-head"><h2>Сегодня в колоде</h2><button class="pill-link" data-go="stats">Прогресс</button></div>
@@ -1095,22 +1095,35 @@ function renderStats(){
   const amax=Math.max(1,...act.map(a=>a.n));
   // распределение по уровням
   const byBox=Array(8).fill(0); cs.forEach(c=>byBox[c.box]++);
-  const tot=Math.max(1,cs.length);
+  const maxBox=Math.max(1,...byBox);
+  const TIPS={
+    known:"Слово считается выученным, когда вы правильно вспомнили его несколько раз подряд и следующий повтор запланирован не раньше чем через 16 дней.",
+    learning:"Слова, которые вы уже начали учить, но они пока повторяются часто: раз в 1, 3 или 7 дней.",
+    acc:"Точность — доля правильных ответов во всех упражнениях за всё время: выбор перевода, пары, сборка из букв и ввод. Правильным считается ответ с первой попытки и без подсказки. Знакомство с карточкой не учитывается.",
+    path:"Каждое правильное повторение поднимает слово на уровень выше, и оно возвращается всё реже: через 1, 3, 7, 16, 35, 80 и 180 дней. Если слово забылось (две и больше ошибки за повторение), оно возвращается на 1-й уровень. С 4-го уровня слово считается выученным."
+  };
+  const tip=t=>`<button class="tip" type="button" aria-label="Пояснение" data-tip="${esc(t)}">?</button>`;
+  const NAMES=["новые","1 д","3 д","7 д","16 д","35 д","80 д","180 д"];
+  const LONG=["Новые: ещё не начаты","Уровень 1: повтор через 1 день","Уровень 2: повтор через 3 дня","Уровень 3: повтор через 7 дней","Уровень 4: повтор через 16 дней","Уровень 5: повтор через 35 дней","Уровень 6: повтор через 80 дней","Уровень 7: повтор через 180 дней"];
+  const BAR=["color-mix(in srgb,var(--ink) 25%,transparent)","var(--pink)","var(--pink)","var(--pink)","var(--accent)","var(--accent)","var(--accent)","var(--accent)"];
   el.innerHTML=`
   <div class="sec-head" style="margin-top:4px"><h2>Ваш прогресс</h2><button class="pill-link" data-go="learn">Учить</button></div>
   <div class="kpis">
     <div class="kpi"><b>${cs.length}</b><span>всего карточек</span></div>
-    <div class="kpi"><b>${cnt.known}</b><span>выучено</span></div>
-    <div class="kpi"><b>${cnt.learning}</b><span>в процессе</span></div>
-    <div class="kpi"><b>${total?Math.round(right/total*100)+"%":"—"}</b><span>точность ответов</span></div>
+    <div class="kpi"><b>${cnt.known}</b><span>выучено${tip(TIPS.known)}</span></div>
+    <div class="kpi"><b>${cnt.learning}</b><span>в процессе${tip(TIPS.learning)}</span></div>
+    <div class="kpi"><b>${total?Math.round(right/total*100)+"%":"—"}</b><span>точность ответов${tip(TIPS.acc)}</span><small>${total?`верных ${right} из ${total}`:"пока нет ответов"}</small></div>
   </div>
-  <div class="panel stack" style="gap:10px">
-    <div class="row" style="justify-content:space-between"><div class="label">Состояние колоды</div><span class="small muted">серия: ${st.n} ${plural(st.n,"день","дня","дней")}</span></div>
-    <div class="stackbar" role="img" aria-label="Новые ${cnt.new}, учу ${cnt.learning}, выучено ${cnt.known}">
-      <i style="width:${cnt.new/tot*100}%;background:var(--line)"></i><i style="width:${cnt.learning/tot*100}%;background:var(--pink)"></i><i style="width:${cnt.known/tot*100}%;background:var(--accent)"></i>
+  <div class="panel stack" style="gap:12px">
+    <div class="row" style="justify-content:space-between"><div class="label">Путь слов${tip(TIPS.path)}</div><span class="small muted">серия: ${st.n} ${plural(st.n,"день","дня","дней")}</span></div>
+    <p class="small muted" style="margin:0">Слово поднимается на уровень выше после каждого верного повторения и возвращается всё реже. Цифра под столбиком — через сколько дней слово вернётся.</p>
+    <div class="path">
+      ${byBox.map((n,i)=>`<div class="pcol" title="${LONG[i]} · слов: ${n}" role="img" aria-label="${LONG[i]}, слов: ${n}"><em>${n||""}</em><i style="--r:${n/maxBox};background:${BAR[i]}"></i></div>`).join("")}
+      ${NAMES.map(t=>`<span class="plab">${t}</span>`).join("")}
+      <span class="pgrp g0" style="grid-column:1"><b>Новые</b></span>
+      <span class="pgrp g1" style="grid-column:2 / span 3"><b>Учу · ${cnt.learning}</b><small>раз в 1–7 дней</small></span>
+      <span class="pgrp g2" style="grid-column:5 / span 4"><b>Выучено · ${cnt.known}</b><small>раз в 16–180 дней</small></span>
     </div>
-    <div class="legend"><span style="--c:var(--line)">новые ${cnt.new}</span><span style="--c:var(--pink)">учу ${cnt.learning}</span><span style="--c:var(--accent)">выучено ${cnt.known}</span></div>
-    <div class="small muted">Уровни 1–7: ${byBox.slice(1).map((n,i)=>`<span class="num">${i+1}: ${n}</span>`).join(" · ")}. Слово считается выученным с 4-го уровня, когда интервал повторения дошёл до 16 дней.</div>
   </div>
   <div class="panel">
     <div class="row" style="justify-content:space-between"><div class="label">Повторения на неделю</div><span class="small muted">сегодня: ${due}</span></div>
@@ -1162,11 +1175,13 @@ function renderPrefs(){
     <div class="setrow"><div class="lbl"><b>Хранение</b><span>${Store.mode==="claude"?"в вашем аккаунте Claude, видно с любого устройства":Store.mode==="supa"?"в вашем аккаунте, видно на любом устройстве после входа":"только в этом браузере — войдите в аккаунт или делайте резервную копию"}</span></div></div>
     <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
     ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Email для MyMemory</b><span>Необязательно. Переводчик MyMemory бесплатно переводит около 5 000 символов в день, это примерно 30–50 новых карточек. Если указать email, лимит вырастет до 50 000. Подтверждать почту не нужно, адрес уходит только в MyMemory и сохраняется в ваших настройках.</span></div><input class="input" id="mmEmail" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(s.mmEmail||"")}" style="max-width:260px"></div>`:""}
+    <div class="setrow"><div class="lbl"><b>Знакомство с сайтом</b><span>показать короткий тур по разделам</span></div><button class="btn" id="tourBtn" type="button">Показать</button></div>
     <div class="setrow"><div class="lbl"><b>Резервная копия</b><span>скопировать колоду как JSON или вставить ранее сохранённую</span></div><div class="row"><button class="btn" id="exp">Копировать</button><button class="btn" id="imp">Вставить</button></div></div>
     <div class="setrow"><div class="lbl"><b>Очистить колоду</b><span>удалить все карточки и статистику</span></div><button class="btn danger" id="wipe">Очистить</button></div>
     <div id="dataArea"></div>
   </div>`;
   bindAccountPanel(el);
+  $("#tourBtn").onclick=()=>startTour(true);
   const save=()=>{ Store.saveSettings(); };
   $("#batch").oninput=e=>{ s.batch=+e.target.value; $("#batchOut").textContent=s.batch; };
   $("#batch").onchange=save;
@@ -1346,14 +1361,14 @@ function accountPanel(){
       <div class="label">Аккаунт</div>
       <div class="row" style="justify-content:space-between"><span class="muted small" style="max-width:46ch">Вы не вошли. Слова хранятся только в этом браузере и могут пропасть при очистке данных.</span>
       <div class="row"><button class="btn primary" data-auth="signup">Регистрация</button><button class="btn" data-auth="signin">Вход</button></div></div>
-      <button class="btn ghost small" data-priv style="align-self:flex-start;padding-left:0">Конфиденциальность</button>
+      <button class="btn ghost small" data-priv style="align-self:flex-start;padding-left:0">Конфиденциальность и источники</button>
     </div>`;
   return `<div class="panel stack" style="gap:6px">
     <div class="label">Аккаунт</div>
     <div class="setrow"><div class="lbl"><b>${esc(Store.user.email||"")}</b><span>${esc($("#sync")?.textContent||"")}</span></div><button class="btn" id="soBtn">Выйти</button></div>
     <div class="setrow"><div class="lbl"><b>Пароль</b><span>сменить пароль для входа по email</span></div><button class="btn" id="pwBtn">Сменить</button></div>
     <div class="setrow"><div class="lbl"><b>Удалить аккаунт</b><span>навсегда удалить аккаунт и все карточки с сервера</span></div><button class="btn danger" id="delAcc">Удалить</button></div>
-    <button class="btn ghost small" data-priv style="align-self:flex-start;padding-left:0">Конфиденциальность</button>
+    <button class="btn ghost small" data-priv style="align-self:flex-start;padding-left:0">Конфиденциальность и источники</button>
     <div id="acctArea"></div>
   </div>`;
 }
@@ -1379,7 +1394,7 @@ function bindAccountPanel(el){
   };
 }
 function openPrivacy(back){
-  openModal(`<h2 class="mtitle">Конфиденциальность</h2>
+  openModal(`<h2 class="mtitle">Конфиденциальность и источники</h2>
   <div class="privacy">
     <h3>Что хранится</h3>
     <p>Если вы не вошли — ничего не уходит на сервер: карточки, настройки и статистика лежат только в вашем браузере.</p>
@@ -1392,11 +1407,119 @@ function openPrivacy(back){
     <p>Чтобы подобрать перевод, транскрипцию и примеры, слово, которое вы вводите, отправляется в <a href="https://mymemory.translated.net" target="_blank" rel="noopener noreferrer">MyMemory</a>, <a href="https://dictionaryapi.dev" target="_blank" rel="noopener noreferrer">Free Dictionary API</a> и <a href="https://tatoeba.org" target="_blank" rel="noopener noreferrer">Tatoeba</a>. Эти сервисы видят ваш IP-адрес, как любой сайт, к которому вы обращаетесь. Уходит только само слово или пример, без email и без привязки к аккаунту. Email уходит в MyMemory, только если вы сами укажете его в настройках для увеличения лимита.</p>
     <p>При входе через Google аккаунт Google лишь подтверждает вашу личность; слова в Google не передаются.</p>
     <p>На сайте нет рекламы, счётчиков и сторонней аналитики. Шрифты и библиотеки загружаются с этого же сайта.</p>
+    <h3>Источники данных</h3>
+    <p>Переводы: <a href="https://mymemory.translated.net" target="_blank" rel="noopener noreferrer">MyMemory</a>. Транскрипция, определения и записи произношения: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener noreferrer">Free Dictionary API</a>. Примеры предложений с переводом: <a href="https://tatoeba.org" target="_blank" rel="noopener noreferrer">Tatoeba</a>, лицензия CC BY 2.0 FR. Аккаунты и база: <a href="https://supabase.com" target="_blank" rel="noopener noreferrer">Supabase</a>.</p>
     <h3>Ваши права</h3>
     <p>Скопировать все свои данные: Настройки → Резервная копия. Удалить аккаунт со всеми данными: Настройки → Аккаунт → Удалить — удаление происходит сразу и навсегда.</p>
   </div>
   <div class="row" style="justify-content:flex-end"><button class="btn primary" id="privOk">${back?"Назад":"Понятно"}</button></div>`);
   $("#privOk").onclick=()=> back ? back() : closeModal();
+}
+
+/* ============ подсказки «?» ============ */
+const tipPop=document.createElement("div"); tipPop.id="tipPop"; tipPop.className="tip-pop"; tipPop.hidden=true; tipPop.setAttribute("role","tooltip"); document.body.appendChild(tipPop);
+let tipBtn=null;
+function showTip(b){
+  tipBtn=b; tipPop.textContent=b.dataset.tip; tipPop.hidden=false;
+  const r=b.getBoundingClientRect(), w=Math.min(300, innerWidth-24); tipPop.style.width=w+"px";
+  tipPop.style.left=Math.min(Math.max(12, r.left+r.width/2-w/2), innerWidth-w-12)+"px";
+  const hg=tipPop.offsetHeight; let top=r.bottom+8; if(top+hg>innerHeight-12) top=Math.max(12, r.top-hg-8);
+  tipPop.style.top=top+"px"; b.setAttribute("aria-describedby","tipPop");
+}
+function hideTip(){ tipPop.hidden=true; tipBtn?.removeAttribute("aria-describedby"); tipBtn=null; }
+document.addEventListener("mouseover",e=>{ const b=e.target.closest?.(".tip"); if(b) showTip(b); });
+document.addEventListener("mouseout",e=>{ if(e.target.closest?.(".tip") && !e.relatedTarget?.closest?.(".tip")) hideTip(); });
+document.addEventListener("focusin",e=>{ const b=e.target.closest?.(".tip"); if(b) showTip(b); });
+document.addEventListener("focusout",e=>{ if(e.target.closest?.(".tip")) hideTip(); });
+document.addEventListener("click",e=>{ const b=e.target.closest?.(".tip"); if(b){ e.preventDefault(); e.stopPropagation(); showTip(b); } else if(!tipPop.hidden) hideTip(); }, true);
+window.addEventListener("scroll",hideTip,{passive:true});
+document.addEventListener("keydown",e=>{ if(e.key==="Escape" && !tipPop.hidden) hideTip(); });
+
+/* ============ тур для новичков ============ */
+const TOUR_KEY="koloda_tour";
+const tourDoneHere=()=>{ try{ return !!localStorage.getItem(TOUR_KEY); }catch{ return false; } };
+function markTourDone(){ try{ localStorage.setItem(TOUR_KEY,"1"); }catch{} if(!S().tourDone){ S().tourDone=true; Store.saveSettings(); } }
+let tour=null;
+function tourSteps(){
+  const st=[];
+  st.push({title:"Добро пожаловать в Колоду", text:"Покажем за минуту, где что находится. Тур можно пропустить: он всегда доступен в настройках.", welcome:true});
+  st.push({view:"learn", target:".top .tabs", title:"Разделы", text:"Учить: тренировки и повторения. Слова: добавление и список. Прогресс: сколько выучено. Настройки: озвучка, форматы упражнений и количество слов."});
+  if(AUTH.enabled && Store.mode==="local") st.push({view:"learn", target:"#acctBtn", title:"Создайте аккаунт", text:"Так слова сохранятся в облаке и будут на любом устройстве. Можно и позже, пока колода хранится только в этом браузере."});
+  st.push({view:"words", target:"#addForm", title:"Добавляйте слова", text:"Введите слово или фразу на английском или русском. Колода предложит варианты перевода, а к выбранному подтянет транскрипцию, произношение и примеры."});
+  st.push({view:"words", target:"details.imp summary", title:"Много слов сразу", text:"Вставьте список: «слово — перевод» или просто слова, перевод подберётся сам."});
+  st.push({view:"learn", target:"#v-learn .hero-glass .btn.primary", title:"Учите", text:"Когда в колоде есть слова, здесь кнопка «Начать обучение». Слова идут партиями: знакомство, выбор перевода, пары, сборка из букв и ввод с клавиатуры."});
+  st.push({view:"stats", target:".kpis", title:"Прогресс и повторения", text:"Слова возвращаются на повторение через 1, 3, 7, 16 дней и дальше, пока не запомнятся надолго. Здесь видно, сколько слов выучено и насколько вы точны."});
+  st.push({view:"prefs", target:"#v-prefs .setrow", title:"Настройки", text:"Сколько слов учить за раз (от 5 до 25), с какого языка показывать карточки, какие упражнения включить и как озвучивать слова."});
+  st.push({title:"Всё готово", text:"Добавьте первое слово или загрузите восемь слов для пробы на главной странице.", last:true});
+  return st;
+}
+function maybeStartTour(){
+  if(tour || sess || tourDoneHere() || S().tourDone || Store.cards.size>0 || !$("#modal").hidden) return;
+  startTour(false);
+}
+function startTour(force){
+  if(tour) return;
+  tour={i:0, steps:tourSteps(), el:null};
+  const el=document.createElement("div"); el.id="tour"; el.className="tour";
+  el.innerHTML=`<div class="tour-block"></div><div class="tour-spot" hidden></div><div class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tourT"><button class="tour-x" type="button" aria-label="Пропустить обучение">×</button><div class="tour-dots"></div><h3 id="tourT"></h3><p id="tourP"></p><div class="tour-btns"></div></div>`;
+  document.body.appendChild(el); tour.el=el;
+  el.querySelector(".tour-x").onclick=()=>endTour();
+  window.addEventListener("resize",tourPlace); window.addEventListener("scroll",tourPlace,{passive:true});
+  document.addEventListener("keydown",tourKey,true);
+  tourShow(0);
+}
+function tourKey(e){
+  if(!tour) return;
+  if(e.key==="Escape"){ e.preventDefault(); e.stopPropagation(); endTour(); }
+  else if(e.key==="ArrowRight"){ e.preventDefault(); tourGo(1); }
+  else if(e.key==="ArrowLeft"){ e.preventDefault(); tourGo(-1); }
+}
+function tourGo(d){
+  if(!tour) return; let i=tour.i+d;
+  if(i<0) return; if(i>=tour.steps.length){ endTour(); return; }
+  tourShow(i, d);
+}
+function tourShow(i, dir=1){
+  const t=tour, st=t.steps[i];
+  if(st.view && view!==st.view) go(st.view);
+  t.i=i;
+  let tgt=st.target?document.querySelector(st.target):null;
+  if(st.target && (!tgt || !tgt.getClientRects().length)){ // элемента нет на экране: пропускаем шаг
+    const j=i+dir; if(j>=0 && j<t.steps.length){ tourShow(j, dir); return; }
+  }
+  if(tgt) tgt.scrollIntoView({block:"center", inline:"nearest"});
+  const el=t.el;
+  el.querySelector(".tour-dots").innerHTML=t.steps.map((_,k)=>`<i class="${k<i?"past":k===i?"on":""}"></i>`).join("");
+  el.querySelector("#tourT").textContent=st.title; el.querySelector("#tourP").textContent=st.text;
+  const btns=el.querySelector(".tour-btns");
+  if(st.welcome) btns.innerHTML=`<button class="btn" type="button" id="tSkip">Пропустить</button><button class="btn primary" type="button" id="tNext">Показать</button>`;
+  else if(st.last) btns.innerHTML=`<button class="btn" type="button" id="tBack">Назад</button><button class="btn primary" type="button" id="tNext">Добавить слово</button>`;
+  else btns.innerHTML=`<button class="btn" type="button" id="tBack">Назад</button><button class="btn primary" type="button" id="tNext">Далее</button>`;
+  if($("#tSkip")) $("#tSkip").onclick=()=>endTour();
+  if($("#tBack")) $("#tBack").onclick=()=>tourGo(-1);
+  $("#tNext").onclick=()=>{ if(st.last){ endTour("words"); } else tourGo(1); };
+  tourPlace(); setTimeout(tourPlace,60); $("#tNext").focus({preventScroll:true});
+}
+function tourPlace(){
+  const t=tour; if(!t) return;
+  const st=t.steps[t.i], el=t.el, card=el.querySelector(".tour-card"), spot=el.querySelector(".tour-spot"), block=el.querySelector(".tour-block");
+  const W=innerWidth, H=innerHeight, cw=Math.min(360,W-24); card.style.width=cw+"px";
+  const tgt=st.target?document.querySelector(st.target):null;
+  const r=tgt && tgt.getClientRects().length ? tgt.getBoundingClientRect() : null;
+  if(!r){ spot.hidden=true; block.classList.add("dim"); card.style.left=(W-cw)/2+"px"; card.style.top=Math.max(12,(H-card.offsetHeight)/2)+"px"; return; }
+  block.classList.remove("dim"); const pad=8;
+  spot.hidden=false; spot.style.left=(r.left-pad)+"px"; spot.style.top=(r.top-pad)+"px"; spot.style.width=(r.width+pad*2)+"px"; spot.style.height=(r.height+pad*2)+"px";
+  const ch=card.offsetHeight; let top=r.bottom+pad+12;
+  if(top+ch>H-12) top=r.top-pad-12-ch;
+  if(top<12) top=(r.top>H-r.bottom)?12:H-ch-12;
+  card.style.left=Math.max(12,Math.min(r.left+r.width/2-cw/2, W-cw-12))+"px"; card.style.top=top+"px";
+}
+function endTour(next){
+  if(!tour) return;
+  window.removeEventListener("resize",tourPlace); window.removeEventListener("scroll",tourPlace); document.removeEventListener("keydown",tourKey,true);
+  tour.el.remove(); tour=null; markTourDone();
+  go(next||"learn");
+  if(next==="words") setTimeout(()=>addInput.focus(),50);
 }
 
 /* ============ routing ============ */
@@ -1418,6 +1541,6 @@ $("#tabs").onclick=e=>{ const b=e.target.closest("button"); if(b) go(b.dataset.v
 Store.loadLocal();
 go((location.hash||"").slice(1));
 setSync(); renderSourceNote();
-Store.connectClaude().then(()=>{ if(!sess) renderAll(); else setSync(); initAuth(); });
+Store.connectClaude().then(()=>{ if(!sess) renderAll(); else setSync(); initAuth(); setTimeout(maybeStartTour,1300); });
 try{ navigator.storage?.persist?.().catch(()=>{}); }catch{}
 document.addEventListener("click", e=>{ if(e.target.closest("#footPriv")){ e.preventDefault(); openPrivacy(); } });
