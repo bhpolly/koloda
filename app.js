@@ -264,11 +264,17 @@ function renderSourceNote(){
 }
 
 /* Free Dictionary API + MyMemory */
+let FETCH_MS = 8000;
+async function fetchT(url, ms=FETCH_MS){
+  const ac=new AbortController(); const t=setTimeout(()=>ac.abort(), ms);
+  try{ return await fetch(url,{signal:ac.signal}); } finally{ clearTimeout(t); }
+}
 const FREE = {
+  limited:0,
   async translate(q, from, to){
     const em=(S().mmEmail||"").trim();
     const u="https://api.mymemory.translated.net/get?q="+encodeURIComponent(q)+"&langpair="+from+"|"+to+(em?"&de="+encodeURIComponent(em):"");
-    let r; try{ r=await fetch(u); }catch{ throw {code:"net"}; }
+    let r; try{ r=await fetchT(u); }catch{ throw {code:"net"}; }
     if(!r.ok) throw {code: r.status===429?"quota":"net"};
     const j=await r.json();
     if(j.responseStatus && +j.responseStatus!==200) throw {code:/quota|limit|429/i.test(String(j.responseDetails)+j.responseStatus)?"quota":"net"};
@@ -284,9 +290,11 @@ const FREE = {
   },
   async dict(word){
     const w=String(word).trim().replace(/^to\s+/i,"");
-    let r; try{ r=await fetch("https://api.dictionaryapi.dev/api/v2/entries/en/"+encodeURIComponent(w)); }catch{ return null; }
+    let r, j; try{ r=await fetchT("https://api.dictionaryapi.dev/api/v2/entries/en/"+encodeURIComponent(w)); }catch{ return null; }
+    if(r.status===429){ this.limited=Date.now(); return null; }
     if(!r.ok) return null;
-    const j=await r.json(); if(!Array.isArray(j)) return null;
+    try{ j=await r.json(); }catch{ return null; }
+    if(!Array.isArray(j)) return null;
     const phon=j.flatMap(e=>e.phonetics||[]);
     let ipa=j.find(e=>e.phonetic)?.phonetic || phon.find(p=>p.text)?.text || "";
     if(ipa && !ipa.startsWith("/")) ipa="/"+ipa.replace(/^\[|\]$/g,"")+"/";
@@ -467,39 +475,125 @@ async function saveDraft(){
 }
 
 /* bulk import */
+const SEP_RE = /\s+[—–−-]\s+|\s*[—–−=→:;\t]\s*/;
+function parseImport(text){
+  const items=[], skipped=[], seen=new Set();
+  const haveEn=new Set(allCards().map(c=>norm(c.en))), haveRu=new Set(allCards().map(c=>norm(c.ru)));
+  for(const raw of String(text).split(/\r?\n/)){
+    const line=raw.replace(/^\s*(?:[-–—•*·]|\d+[.)])\s+/,"").trim(); if(!line) continue;
+    let a=line, b="";
+    const m=SEP_RE.exec(line);
+    if(m){ a=line.slice(0,m.index).trim(); b=line.slice(m.index+m[0].length).trim(); }
+    else if(/[a-z]/i.test(line) && /[а-яё]/i.test(line)){ // «cat кошка» или «cat-кошка»: делим там, где меняется алфавит
+      const first=line.match(/[a-zа-яё]/i)[0];
+      const i=line.search(isCyr(first)?/[a-z]/i:/[а-яё]/i);
+      a=line.slice(0,i).replace(/[\s\-–—:=]+$/,"").trim(); b=line.slice(i).trim();
+    }
+    if(!a){ skipped.push([line,"нет слова"]); continue; }
+    let en="", ru="", need=null;
+    if(b){
+      if(isCyr(a)===isCyr(b)){ skipped.push([line,"не понял, где слово и где перевод"]); continue; }
+      if(isCyr(a)) [a,b]=[b,a];
+      en=a; ru=b;
+    } else if(isCyr(a)){ ru=a; need="en"; }
+    else { en=a; need="ru"; }
+    en=en.slice(0,200); ru=ru.slice(0,300);
+    const key = en ? "e:"+norm(en) : "r:"+norm(ru);
+    if(seen.has(key) || (en ? haveEn.has(norm(en)) : haveRu.has(norm(ru)))){ skipped.push([line,"уже есть"]); continue; }
+    seen.add(key); items.push({en, ru, need});
+  }
+  return {items, skipped};
+}
+async function pool(list, n, fn, stop){
+  let i=0;
+  await Promise.all(Array.from({length:Math.min(n,list.length)}, async()=>{ while(i<list.length && !stop()){ const it=list[i++]; try{ await fn(it); }catch{} } }));
+}
+let impBusy=false, impStop=false;
 $("#impBtn").onclick = async ()=>{
-  const lines = $("#impText").value.split(/\n+/).map(l=>l.trim()).filter(Boolean);
-  const pairs=[];
-  for(const l of lines){
-    const p = l.split(/\s+[—–-]\s+|\t|;/).map(s=>s.trim()).filter(Boolean);
-    if(p.length<2) continue;
-    let [a,b]=p; if(isCyr(a)&&!isCyr(b)) [a,b]=[b,a];
-    if(allCards().some(c=>norm(c.en)===norm(a))) continue;
-    pairs.push({en:a, ru:b});
+  if(impBusy){ impStop=true; $("#impBtn").textContent="Останавливаю…"; return; }
+  const {items, skipped}=parseImport($("#impText").value);
+  const res=$("#impResult"), btn=$("#impBtn");
+  if(!items.length){
+    res.innerHTML = `<div class="feedback no small">${skipped.length?"Все строки пропущены (см. ниже).":"Список пуст."}${reportSkipped(skipped)}</div>`; return;
   }
-  if(!pairs.length){ toast("Не нашла пар «слово — перевод»"); return; }
-  const btn=$("#impBtn"); btn.disabled=true;
-  const made = pairs.map(p=>newCard(p));
-  if($("#impEx").checked && !(await getSample())){
-    for(let i=0;i<made.length;i++){ // бесплатный словарь: транскрипция, аудио и английские примеры
-      btn.textContent=`Словарь ${i+1}/${made.length}…`;
-      const d=await FREE.dict(made[i].en);
-      if(d){ Object.assign(made[i], {ipa:d.ipa, pos:d.pos, audio:d.audio, examples:d.examples}); }
+  if(items.length>500){ res.innerHTML=`<div class="feedback no small">За один раз не больше 500 слов. Сейчас в списке ${items.length}.</div>`; return; }
+  impBusy=true; impStop=false; res.innerHTML="";
+  const sample=await getSample();
+  const failed=[];
+  try{
+    // 1. слова без перевода: подбираем перевод
+    const todo=items.filter(x=>x.need);
+    if(todo.length){
+      let done=0; btn.textContent=`Перевожу 0/${todo.length}…`;
+      if(sample){
+        for(let i=0;i<todo.length;i+=25){
+          const chunk=todo.slice(i,i+25);
+          try{
+            const r=await askJSON(`Translate each numbered item: English to Russian, Russian to English. Reply with ONLY a JSON array of strings in the same order, giving the single most common translation (keep "to" for English verbs).\n\n${chunk.map((x,k)=>`${k}. ${x.need==="ru"?x.en:x.ru}`).join("\n")}`,"quick");
+            chunk.forEach((x,k)=>{ const t=String(r?.[k]||"").trim(); if(t){ if(x.need==="ru") x.ru=t.slice(0,300); else x.en=t.slice(0,200); } });
+          }catch{}
+        }
+      } else {
+        await pool(todo, 2, async x=>{
+          const j=await FREE.translate(x.need==="ru"?x.en:x.ru, x.need==="ru"?"en":"ru", x.need==="ru"?"ru":"en");
+          const t=FREE.variants(j, x.need==="ru"?x.en:x.ru)[0];
+          if(t){ if(x.need==="ru") x.ru=t; else x.en=t; }
+          btn.textContent=`Перевожу ${++done}/${todo.length}…`;
+        }, ()=>false);
+      }
     }
-  } else if($("#impEx").checked){
-    for(let i=0;i<made.length;i+=25){
-      btn.textContent = `Примеры ${Math.min(i+25,made.length)}/${made.length}…`;
-      const chunk = made.slice(i,i+25);
-      try{
-        const r = await askJSON(examplesPrompt(chunk),"quick");
-        (Array.isArray(r)?r:[]).forEach(x=>{ const c=chunk[x?.i]; if(!c) return; c.ipa=x.ipa||""; c.pos=x.pos||""; c.examples=(x.examples||[]).filter(e=>e?.en).slice(0,3); });
-      }catch(e){ toast(lookupErrorText(e)); break; }
+    const ready=[];
+    items.forEach(x=>{ if(x.en && x.ru) ready.push(x); else failed.push([x.en||x.ru,"не удалось подобрать перевод"]); });
+    // 2. сразу сохраняем карточки, чтобы ничего не потерялось
+    const made=ready.map(x=>newCard({en:x.en, ru:x.ru}));
+    made.forEach(c=>Store.saveCard(c));
+    renderList();
+    // 3. дополняем транскрипцией, аудио и примерами
+    let withInfo=0, noInfo=0, stopped=false;
+    if($("#impEx").checked && made.length){
+      let n=0; const total=made.length; btn.textContent=`Остановить · 0/${total}`;
+      const stopNow=()=>impStop;
+      if(sample){
+        for(let i=0;i<made.length && !impStop;i+=25){
+          const chunk=made.slice(i,i+25);
+          try{
+            const r=await askJSON(examplesPrompt(chunk),"quick");
+            (Array.isArray(r)?r:[]).forEach(x=>{ const c=chunk[x?.i]; if(!c) return; c.ipa=str(x.ipa,100); c.pos=str(x.pos,40); c.examples=(Array.isArray(x.examples)?x.examples:[]).filter(e=>e?.en).slice(0,3).map(e=>({en:str(e.en,300),ru:str(e.ru,300)})); Store.saveCard(c); withInfo++; });
+          }catch{}
+          n+=chunk.length; btn.textContent=`Остановить · ${Math.min(n,total)}/${total}`;
+        }
+      } else {
+        await pool(made, 3, async c=>{
+          if(Date.now()-FREE.limited<60000) { noInfo++; n++; return; }
+          const d=await FREE.dict(c.en);
+          if(d && (d.ipa||d.examples.length||d.audio)){ Object.assign(c,{ipa:d.ipa, pos:d.pos, audio:d.audio, examples:d.examples}); Store.saveCard(c); withInfo++; } else noInfo++;
+          btn.textContent=`Остановить · ${++n}/${total}`;
+        }, stopNow);
+      }
+      stopped=impStop;
+      if(!sample) noInfo=made.length-withInfo;
     }
+    // 4. отчёт
+    const allSkipped=[...skipped,...failed];
+    const keep=allSkipped.filter(([,why])=>why!=="уже есть").map(([l])=>l);
+    $("#impText").value=keep.join("\n");
+    let msg=`Добавлено ${made.length} ${plural(made.length,"слово","слова","слов")}.`;
+    if($("#impEx").checked && made.length){
+      msg += ` Транскрипция и примеры: ${withInfo} из ${made.length}.`;
+      if(stopped) msg+=" Дополнение остановлено, остальные слова остались без примеров.";
+      else if(noInfo && !sample) msg+=" Для остальных словарь ничего не нашёл (так бывает с фразами): примеры можно вписать в карточке.";
+      if(!sample && Date.now()-FREE.limited<60000) msg+=" Словарь временно ограничил запросы, попробуйте позже.";
+    }
+    res.innerHTML=`<div class="feedback ${made.length?"ok":"no"} small">${esc(msg)}${reportSkipped(allSkipped)}</div>`;
+    toast(`Добавлено ${made.length} ${plural(made.length,"слово","слова","слов")}`);
+  } finally {
+    impBusy=false; impStop=false; btn.disabled=false; btn.textContent="Импортировать"; renderList();
   }
-  made.forEach(c=>Store.saveCard(c));
-  btn.disabled=false; btn.textContent="Импортировать"; $("#impText").value="";
-  toast(`Добавлено ${made.length} ${plural(made.length,"карточка","карточки","карточек")}`); renderList();
 };
+function reportSkipped(sk){
+  if(!sk.length) return "";
+  return `<details style="margin-top:8px" open><summary class="small" style="cursor:pointer;font-weight:700">Не добавлено: ${sk.length}</summary><ul style="margin:6px 0 0;padding-left:18px">${sk.map(([l,why])=>`<li>${esc(l)} <span class="muted">— ${esc(why)}</span></li>`).join("")}</ul></details>`;
+}
 
 /* ============ words list ============ */
 let filter="all";

@@ -38,12 +38,13 @@
         <details class="imp">
           <summary>Добавить списком</summary>
           <div class="stack" style="margin-top:12px">
-            <p class="muted small" style="margin:0">По одной паре в строке: <b>слово — перевод</b>. Разделитель: тире, дефис с пробелами, табуляция или «;».</p>
-            <textarea class="input" id="impText" placeholder="to cope with — справляться с&#10;receipt — чек&#10;jealous — ревнивый, завистливый"></textarea>
+            <p class="muted small" style="margin:0">По одному слову в строке. Можно с переводом: <b>слово — перевод</b> (разделитель: тире, дефис, двоеточие, «=» или «;»), а можно только слово, тогда перевод подберётся сам. Строки, которые не получилось разобрать, останутся в поле, а в отчёте будет причина.</p>
+            <textarea class="input" id="impText" placeholder="to cope with — справляться с&#10;receipt: чек&#10;jealous&#10;ревнивый"></textarea>
             <div class="row" style="justify-content:space-between">
               <label class="row small muted" style="gap:8px"><span class="switch"><input type="checkbox" id="impEx" checked><span></span></span>подобрать примеры и транскрипцию</label>
               <button class="btn" id="impBtn" type="button">Импортировать</button>
             </div>
+            <div id="impResult" role="status"></div>
           </div>
         </details>
         <p class="small muted" id="srcNote" style="margin:0"></p>
