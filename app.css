@@ -389,4 +389,58 @@ details.imp[open] summary::after{content:"−"}
 .tour-dots i.past{background:var(--accent)}
 .tour-dots i.on{background:var(--pink-strong)}
 .tour-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:6px}
+
+/* главная: прогресс, действия, функции */
+.prog{position:relative;border-radius:28px;overflow:hidden;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:18px;align-items:stretch;padding:20px;color:var(--hero-ink);
+  background:radial-gradient(420px 300px at 96% 0%,color-mix(in srgb,var(--accent) 70%,transparent),transparent 70%),
+             radial-gradient(380px 300px at 60% 120%,color-mix(in srgb,var(--pink) 80%,transparent),transparent 70%),
+             radial-gradient(360px 260px at 0% 0%,color-mix(in srgb,var(--pink-strong) 40%,transparent),transparent 70%),var(--hero-base)}
+.prog-streak{display:flex;flex-direction:column;gap:6px;justify-content:center;min-width:0}
+.prog-num{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.prog-num b{font-family:var(--f-display);font-weight:800;font-size:clamp(56px,10vw,84px);line-height:.95;letter-spacing:-.03em;color:var(--accent);font-variant-numeric:tabular-nums}
+.prog-num span{font-size:clamp(18px,3vw,24px);font-weight:800}
+.prog-streak .streak span{background:rgba(255,255,255,.3)}
+.prog-streak .streak span.on{background:var(--accent)}
+.prog-streak p{margin:2px 0 0;font-size:14px;font-weight:600;opacity:.92}
+.tip-light{color:#fff;margin-left:8px}
+.prog-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.pstat{border:0;border-radius:22px;padding:16px 14px;display:flex;flex-direction:column;justify-content:flex-end;gap:4px;text-align:left;cursor:pointer;min-height:130px;font-family:var(--f-body)}
+.pstat b{font-family:var(--f-display);font-weight:800;font-size:clamp(34px,6vw,48px);line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.pstat span{font-size:13px;font-weight:700;line-height:1.2}
+.pstat.lime{background:var(--accent);color:var(--accent-ink)}
+.pstat.pink{background:var(--pink);color:var(--pink-ink)}
+.pstat.dark{background:rgba(255,255,255,.16);color:#fff;border:1px solid rgba(255,255,255,.3);backdrop-filter:blur(10px)}
+.pstat:hover{filter:brightness(1.05);transform:translateY(-1px)}
+@media (max-width:760px){.prog{grid-template-columns:1fr;padding:18px}.pstat{min-height:104px;padding:14px 12px}}
+.acts .ftile.compact{min-height:0;padding:20px}
+.acts .bignum{font-size:46px}
+.ftile.compact .btn{margin-top:8px}
+.addtile{border:2px dashed var(--line);background:var(--surface);color:var(--ink);text-align:left;cursor:pointer;font-family:var(--f-body)}
+.addtile:hover{border-color:var(--ink);background:var(--surface-2)}
+.addtile .plus{font-family:var(--f-display);font-weight:800;font-size:46px;line-height:1;color:var(--pink-strong)}
+.addtile .btn{align-self:flex-start;margin-top:auto;pointer-events:none}
+@media (max-width:560px){.acts{gap:12px}}
+.feats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:900px){.feats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:420px){.feats{grid-template-columns:1fr}}
+.feat{display:flex;gap:12px;align-items:flex-start;border-radius:20px;padding:16px;background:var(--surface)}
+.feat.lime{background:var(--accent);color:var(--accent-ink)}
+.feat.pinky{background:var(--pink);color:var(--pink-ink)}
+.feat .fi{flex:none;width:38px;height:38px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center}
+.feat.lime .fi,.feat.pinky .fi{background:var(--accent-ink);color:var(--accent)}
+.feat.pinky .fi{color:var(--pink)}
+.feat .fi svg{width:20px;height:20px}
+.feat b{font-size:14px;font-weight:800;display:block;margin-bottom:2px}
+.feat p{margin:0;font-size:12.5px;line-height:1.4;opacity:.8}
+.welcome{position:relative;border-radius:28px;overflow:hidden;padding:22px;color:var(--hero-ink);
+  background:radial-gradient(460px 320px at 96% 0%,color-mix(in srgb,var(--accent) 70%,transparent),transparent 70%),
+             radial-gradient(420px 320px at 70% 130%,color-mix(in srgb,var(--pink) 80%,transparent),transparent 70%),var(--hero-base)}
+.welcome-in{display:flex;flex-direction:column;gap:12px;align-items:flex-start;max-width:560px}
+.welcome-title{font-family:var(--f-display);font-weight:800;font-size:clamp(32px,6vw,52px);line-height:1.02;letter-spacing:-.03em}
+.welcome-title span{color:var(--accent)}
+.welcome p{margin:0;font-size:14px;opacity:.92;max-width:46ch}
+.welcome .btn.ghost{color:var(--hero-ink);opacity:.9}
+.hero-cta{}
+/* меню «⋯» в тренировке */
+.sess-menu{position:absolute;right:max(16px,calc(50% - 330px));top:64px;z-index:5;width:min(340px,calc(100vw - 32px));background:var(--bg);border:1.5px solid var(--line);border-radius:20px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}

@@ -716,7 +716,7 @@ function renderList(){
   const q = norm($("#search").value);
   let list = allCards().sort((a,b)=>b.created-a.created);
   if(tagFilter) list=list.filter(c=>c.tags.includes(tagFilter));
-  if(filter==="due") list=list.filter(isDue); else if(filter!=="all") list=list.filter(c=>status(c)===filter);
+  if(filter==="due") list=list.filter(isDue); else if(filter==="hard") list=list.filter(c=>c.fails>0||(c.lapses>0&&c.box<4)); else if(filter!=="all") list=list.filter(c=>status(c)===filter);
   if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||c.tags.some(t=>t.includes(q)));
   const el=$("#wlist");
   if(!Store.cards.size){ el.innerHTML=`<div class="panel empty muted">Колода пуста. Добавьте первое слово выше.</div>`; return; }
@@ -808,74 +808,83 @@ function streakInfo(){
   const last7=[]; for(let i=6;i>=0;i--) last7.push(!!days[dayKey(Date.now()-i*DAY)]);
   return {n,last7};
 }
-const SPK_W = SPK.replace('stroke="currentColor"','stroke="#fff"');
-function heroHtml(cta){
-  return `<section class="hero">
-    <div class="hero-glass">
-      <div class="hero-kicker">карточки английских слов</div>
-      <h1 class="hero-title">Колода<span>.en</span></h1>
-      <p>Перевод, примеры и произношение в одной карточке. Тренировки по 5–25 слов и повторения ровно тогда, когда слово начинает забываться.</p>
-      <div class="row">${cta}</div>
-    </div>
-    <div class="hero-art" aria-hidden="true">
-      <div class="hc hc3"><b>to cope</b><i>справляться</i></div>
-      <div class="hc hc1"><span class="dot">${SPK_W}</span><b>receipt</b><i>/rɪˈsiːt/</i></div>
-      <div class="hc hc2"><b>чек, квитанция</b><i>noun · B1</i></div>
-    </div>
-  </section>`;
-}
+const FEATS=[
+  {c:"lime", t:"Перевод за секунду", p:"Введите слово на русском или английском: варианты перевода подберутся сами.", i:'<path d="M4 5h9M8.5 3v2M6 5c.6 3 3 6 6 7M12 5c-.6 3-3 6-6 7"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/>'},
+  {c:"", t:"Примеры и звук", p:"Транскрипция, примеры с переводом и озвучка в каждой карточке.", i:'<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>'},
+  {c:"pinky", t:"Повторения по плану", p:"Слово возвращается через 1, 3, 7, 16 дней и дальше, пока не запомнится.", i:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'},
+  {c:"", t:"Подборки по тегам", p:"Один тег — одна подборка. Слово может входить в несколько.", i:'<path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="8.5" r="1.2"/>'}
+];
+const featStrip = () => `<div class="feats">${FEATS.map(f=>`<div class="feat ${f.c}"><span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${f.i}</svg></span><div><b>${f.t}</b><p>${f.p}</p></div></div>`).join("")}</div>`;
 function renderLearn(){
   const el=$("#v-learn"), cs=allCards();
   if(!cs.length){
-    el.innerHTML = heroHtml(`<button class="btn primary" data-go="words">Добавить слово</button><button class="btn ghost" id="demoBtn">8 слов для пробы</button>`) + `
-    <div class="sec-head"><h2>Колода — больше, чем список слов</h2><button class="pill-link" data-go="words">Добавить</button></div>
-    <div class="grid3">
-      <div class="ftile lime"><h3>Перевод за секунду</h3><p>Введите слово на английском или русском и выберите подходящий перевод из вариантов словаря.</p><span class="deco ring"></span></div>
-      <div class="ftile"><h3>Примеры и звук</h3><p>Транскрипция, примеры предложений и озвучка — в каждой карточке.</p><span class="deco stackc"><i></i><i></i><i></i></span></div>
-      <div class="ftile pinky"><h3>Повторения по плану</h3><p>Слово возвращается через 1, 3, 7, 16 дней и дальше — пока не запомнится надолго.</p><span class="deco bubble"></span></div>
-    </div>`;
+    el.innerHTML = `<section class="welcome">
+      <div class="welcome-in">
+        <span class="hero-kicker">Колода слов</span>
+        <h1 class="welcome-title">Выучите слова <span>надолго</span></h1>
+        <p>Добавьте слово, а Колода подберёт перевод, примеры и звук, а потом вернёт его на повторение ровно тогда, когда оно начнёт забываться.</p>
+        <div class="row hero-cta"><button class="btn primary" data-go="words">Добавить слово</button><button class="btn ghost" id="demoBtn">8 слов для пробы</button></div>
+      </div></section>
+    <div class="sec-head"><h2>Что умеет Колода</h2></div>${featStrip()}`;
     $("#demoBtn").onclick=()=>{ DEMO.forEach((d,i)=>{ const c=newCard({...d, demo:true}); c.created+=i; Store.saveCard(c); }); renderAll(); toast("Добавлено 8 карточек"); };
     bindGo(el); return;
   }
   const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
   const dc=deckCards(), fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, todo=fresh+due, closed=dc.filter(closedLevel).length, n=Math.min(S().batch, todo), nP=Math.min(S().batch, closed);
-  const deckBar = tagsAll.length ? `<div class="deckbar"><span class="label">Подборка<button class="tip" type="button" aria-label="Пояснение" data-tip="Выберите тег, и тренировка возьмёт только слова с ним. Подборку можно сменить в любой момент. Прогресс у слова один на все подборки: выученное слово вернётся на повторение только в свой срок, даже если оно есть в другой подборке.">?</button></span><div class="filters" id="deckChips"><button type="button" data-deck="" aria-pressed="${!S().deck}" ${tipAttr("Учить все слова колоды")}>Все слова · ${cs.length}</button>${tagsAll.map(([t,k])=>`<button type="button" data-deck="${esc(t)}" aria-pressed="${S().deck===t}" ${tipAttr("Учить и повторять только слова с тегом «"+t+"»")}>${esc(t)} · ${k}</button>`).join("")}</div></div>` : "";
   const st=streakInfo(), today=Store.stats.days?.[dayKey()];
-  const cta = todo ? `<button class="btn primary" data-start="learn">Начать обучение</button>`
-            : closed ? `<button class="btn primary" data-start="practice">Тренировать</button>`
-            : `<button class="btn primary" data-go="words">Добавить слово</button>`;
-  el.innerHTML = heroHtml(cta) + deckBar + `
-  <div class="sec-head"><h2>Сегодня в колоде</h2><button class="pill-link" data-go="stats">Прогресс</button></div>
-  <div class="grid3">
-    <div class="ftile lime">
-      <div class="label">К изучению</div>
+  const known=cs.filter(c=>status(c)==="known").length, dueAll=cs.filter(isDue).length, hard=cs.filter(c=>c.fails>0 || (c.lapses>0 && c.box<4)).length;
+  const deckName=S().deck?`«${esc(S().deck)}»`:"все слова";
+  const msg = today?.n ? `Сегодня уже ${today.n} ${plural(today.n,"слово","слова","слов")}. Так держать!` : st.n ? "Позанимайтесь сегодня, чтобы серия не прервалась." : "Позанимайтесь сегодня и запустите свою серию.";
+  const deckBar = `<div class="sec-head"><h2>Подборки по тегам</h2></div>` + (tagsAll.length ? `<div class="deckbar"><span class="label">Учить<button class="tip" type="button" aria-label="Пояснение" data-tip="Выберите тег, и «Учить» и «Тренировка» возьмут только слова с ним. Подборку можно сменить в любой момент. Прогресс у слова один на все подборки: выученное слово вернётся на повторение только в свой срок, даже если оно есть в другой подборке.">?</button></span><div class="filters" id="deckChips"><button type="button" data-deck="" aria-pressed="${!S().deck}" ${tipAttr("Учить все слова колоды")}>Все слова · ${cs.length}</button>${tagsAll.map(([t,k])=>`<button type="button" data-deck="${esc(t)}" aria-pressed="${S().deck===t}" ${tipAttr("Учить и повторять только слова с тегом «"+t+"»")}>${esc(t)} · ${k}</button>`).join("")}</div></div>`
+    : `<div class="panel small muted" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between">Добавьте слову тег, например «работа», и его можно будет учить отдельной подборкой.<button class="pill-link" data-go="words">К словам</button></div>`);
+  el.innerHTML = `
+  <section class="prog" aria-label="Ваш прогресс">
+    <div class="prog-streak">
+      <span class="hero-kicker">Серия${`<button class="tip tip-light" type="button" aria-label="Пояснение" data-tip="Сколько дней подряд вы занимались. Достаточно одной завершённой тренировки в день. Полоски показывают последние 7 дней, справа сегодняшний.">?</button>`}</span>
+      <div class="prog-num"><b>${st.n}</b><span>${plural(st.n,"день","дня","дней")} подряд</span></div>
+      <div class="streak" aria-label="Активность за 7 дней">${st.last7.map(on=>`<span class="${on?"on":""}"></span>`).join("")}</div>
+      <p>${msg}</p>
+    </div>
+    <div class="prog-stats">
+      <button class="pstat lime" type="button" data-gof="known" ${tipAttr("Слова, которые вы выучили надолго (с 4-го уровня). Нажмите, чтобы открыть их список.")}><b>${known}</b><span>изучено</span></button>
+      <button class="pstat pink" type="button" data-gof="due" ${tipAttr("Слова, у которых пришёл срок повтора. Нажмите, чтобы открыть их список.")}><b>${dueAll}</b><span>ждут повторения</span></button>
+      <button class="pstat dark" type="button" data-gof="hard" ${tipAttr("Слова, в которых вы чаще ошибались: с ними ещё стоит поработать. Нажмите, чтобы открыть их список.")}><b>${hard}</b><span>нужно подтянуть</span></button>
+    </div>
+  </section>
+
+  <div class="sec-head"><h2>Что делаем сегодня</h2><span class="chip">подборка: ${deckName}</span></div>
+  <div class="grid3 acts">
+    <div class="ftile lime compact hero-cta">
+      <div class="label">Учить</div>
       <div class="bignum">${todo}</div>
-      <p>${todo?`${fresh} ${plural(fresh,"новое","новых","новых")} · ${due} на повторении`:"Всё изучено на текущих уровнях. Добавьте новые слова"}</p>
-      <button class="btn" data-start="learn" ${todo?"":"disabled"} ${tipAttr("Подборка из слов, у которых текущий уровень ещё не закрыт: новые и те, у которых пришёл срок повтора. Без ошибок уровень растёт, с ошибками слово остаётся в подборке.")}>${todo?`Учить ${n} ${plural(n,"слово","слова","слов")}`:"Нечего учить"}</button>
+      <p>${todo?`${fresh} ${plural(fresh,"новое","новых","новых")} · ${due} на повторении`:"Всё изучено на текущих уровнях"}</p>
+      <button class="btn primary" data-start="learn" ${todo?"":"disabled"} ${tipAttr("Подборка из слов, у которых текущий уровень ещё не закрыт: новые и те, у которых пришёл срок повтора. Без ошибок уровень растёт, с ошибками слово остаётся в подборке.")}>${todo?`Учить ${n} ${plural(n,"слово","слова","слов")}`:"Нечего учить"}</button>
       <span class="deco ring"></span>
     </div>
-    <div class="ftile">
+    <div class="ftile compact">
       <div class="label">Тренировка</div>
       <div class="bignum">${closed}</div>
       <p>${closed?"слов можно потренировать для себя":"пока нет слов с закрытым уровнем"}</p>
       <button class="btn ${closed?"pink":""}" data-start="practice" ${closed?"":"disabled"} ${tipAttr("Слова, у которых текущий уровень уже закрыт и срок повтора не пришёл. Тренироваться можно сколько угодно: уровень слов не меняется.")}>${closed?`Тренировать ${nP}`:"Тренировать"}</button>
       <span class="deco stackc"><i></i><i></i><i></i></span>
     </div>
-    <div class="ftile pinky">
-      <div class="label">Серия</div>
-      <div class="bignum">${st.n}</div>
-      <p>${plural(st.n,"день","дня","дней")} подряд${today?` · сегодня ${today.n} ${plural(today.n,"слово","слова","слов")}`:""}</p>
-      <div class="streak" aria-label="Активность за 7 дней">${st.last7.map(on=>`<span class="${on?"on":""}"></span>`).join("")}</div>
-      <button class="btn" data-go="words">+ Новое слово</button>
-    </div>
+    <button class="ftile compact addtile" type="button" data-go="words" ${tipAttr("Перейти к добавлению слов: по одному или списком")}>
+      <div class="label">Новые слова</div>
+      <div class="plus" aria-hidden="true">+</div>
+      <p>Добавить слово или целый список. Перевод, примеры и звук подберутся сами.</p>
+      <span class="btn">Добавить слова</span>
+    </button>
   </div>
+  ${deckBar}
   ${AUTH.enabled && Store.mode==="local" ? `<div class="ftile nudge"><div><h3>Сохраните слова в аккаунте</h3><p>Сейчас колода живёт только в этом браузере. С аккаунтом слова не потеряются и будут на любом устройстве.</p></div><div class="row"><button class="btn primary" data-auth="signup">Регистрация</button><button class="btn" data-auth="signin">Вход</button></div></div>` : ""}
-  <div class="sec-head"><h2>Недавно добавленные</h2><button class="pill-link" data-go="words">Все слова</button></div>
+  <div class="sec-head"><h2>Все слова</h2><button class="pill-link" data-go="words">Открыть список · ${cs.length}</button></div>
   <div class="grid2">
-    ${cs.sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
-  </div>`;
+    ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
+  </div>
+  <div class="sec-head"><h2>Что умеет Колода</h2></div>${featStrip()}`;
   el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startPractice());
   el.querySelectorAll("[data-deck]").forEach(b=>b.onclick=()=>{ hideTip(); S().deck=b.dataset.deck; Store.saveSettings(); renderLearn(); });
+  el.querySelectorAll("[data-gof]").forEach(b=>b.onclick=()=>{ hideTip(); filter=b.dataset.gof; tagFilter=""; $("#filters").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.f===filter)); go("words"); });
   el.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>openAuth(b.dataset.auth));
   bindGo(el);
 }
@@ -926,6 +935,8 @@ function next(){
   if(sess.r>=sess.rounds.length) return finish();
   const round=sess.rounds[sess.r];
   sess.busy=false;
+  sess.cur = typeof round.queue[0]==="string" ? round.queue[0] : null;   // в «парах» карточка не одна
+  closeSessMenu(); $("#sessMore").hidden = !sess.cur;
   ({intro:stepIntro, choice:stepChoice, match:stepMatch, letters:stepLetters, typing:stepTyping})[round.type](round, round.queue[0]);
 }
 function done(ok, id, requeue=true){
@@ -1095,6 +1106,7 @@ function stepTyping(round, id){
 }
 document.addEventListener("keydown", e=>{
   if($("#sess").hidden) return;
+  if(e.target.closest?.("#sessMenu")) return;
   if($("#qc")){ if(e.key==="Escape") $("#qc").remove(); return; }
   if(e.key==="Escape"){ askClose(); return; }
   const round=sess?.rounds[sess.r]; if(!round) return;
@@ -1102,6 +1114,25 @@ document.addEventListener("keydown", e=>{
   if(round.type==="choice" && /^[1-4]$/.test(e.key)){ $(`[data-o="${+e.key-1}"]`)?.click(); }
   if(e.key==="Enter" && !["INPUT","BUTTON","TEXTAREA","SELECT"].includes(document.activeElement?.tagName)){ const g=$("#go")||$("#iNext"); if(g){ e.preventDefault(); g.click(); } }
 });
+
+/* меню «⋯»: добавить тег текущему слову, не затрагивая тренировку */
+function closeSessMenu(){ const m=$("#sessMenu"); if(m) m.hidden=true; }
+$("#sessMore").onclick=e=>{
+  e.stopPropagation();
+  const m=$("#sessMenu"); if(!m.hidden){ m.hidden=true; return; }
+  const c=sess&&sess.cur&&cardOf(sess.cur); if(!c) return;
+  m.innerHTML=`<b>Теги слова «${esc(c.en)}»</b>
+    <label class="f"><input class="input" id="sm-tags" autocomplete="off" value="${esc(c.tags.join(", "))}" placeholder="например: работа, поездка" maxlength="200" aria-label="Теги"></label>
+    <div class="tagchips"></div>
+    <div class="small muted">Слово останется в текущей подборке, его прогресс не изменится.</div>
+    <div class="row" style="justify-content:flex-end"><button class="btn" id="sm-cancel" type="button">Отмена</button><button class="btn primary" id="sm-save" type="button">Сохранить</button></div>`;
+  m.hidden=false; syncTagBox(m); hideTip();
+  $("#sm-cancel").onclick=closeSessMenu;
+  $("#sm-save").onclick=()=>{ c.tags=parseTags($("#sm-tags").value); Store.saveCard(c); closeSessMenu(); toast("Теги сохранены"); };
+  $("#sm-tags").onkeydown=ev=>{ ev.stopPropagation(); if(ev.key==="Enter"){ ev.preventDefault(); $("#sm-save").click(); } if(ev.key==="Escape"){ closeSessMenu(); } };
+  $("#sm-tags").focus();
+};
+document.addEventListener("click",e=>{ const m=$("#sessMenu"); if(m && !m.hidden && !e.target.closest("#sessMenu,#sessMore")) m.hidden=true; });
 function askClose(){
   if(!sess || sess.finished){ closeSess(); return; }
   if($("#qc")) return; // окно подтверждения уже открыто: второе не создаём
@@ -1116,7 +1147,7 @@ $("#sessClose").onclick=askClose;
 function closeSess(){ try{ speechSynthesis.cancel(); }catch{} $("#qc")?.remove(); $("#sess").hidden=true; document.body.style.overflow=""; sess=null; renderAll(); }
 
 function finish(){
-  sess.finished=true; updateBar();
+  sess.finished=true; updateBar(); $("#sessMore").hidden=true; closeSessMenu();
   const now=Date.now(), rows=[], practice=sess.kind==="practice", kind=sess.kind;
   let learnedN=0, reviewedN=0;
   for(const id of sess.ids){
@@ -1524,7 +1555,7 @@ function tourSteps(){
   if(AUTH.enabled && Store.mode==="local") st.push({view:"learn", target:"#acctBtn", title:"Создайте аккаунт", text:"Так слова сохранятся в облаке и будут на любом устройстве. Можно и позже, пока колода хранится только в этом браузере."});
   st.push({view:"words", target:"#addForm", title:"Добавляйте слова", text:"Введите слово или фразу на английском или русском. Колода предложит варианты перевода, а к выбранному подтянет транскрипцию, произношение и примеры."});
   st.push({view:"words", target:"details.imp summary", title:"Много слов сразу", text:"Вставьте список: «слово — перевод» или просто слова, перевод подберётся сам."});
-  st.push({view:"learn", target:"#v-learn .hero-glass .btn.primary", title:"Учите", text:"Когда в колоде есть слова, здесь кнопка «Начать обучение». Слова идут партиями: знакомство, выбор перевода, пары, сборка из букв и ввод с клавиатуры."});
+  st.push({view:"learn", target:"#v-learn .hero-cta .btn.primary", title:"Учите", text:"Когда в колоде есть слова, здесь кнопка «Начать обучение». Слова идут партиями: знакомство, выбор перевода, пары, сборка из букв и ввод с клавиатуры."});
   st.push({view:"stats", target:".kpis", title:"Прогресс и повторения", text:"Слова возвращаются на повторение через 1, 3, 7, 16 дней и дальше, пока не запомнятся надолго. Здесь видно, сколько слов выучено и насколько вы точны."});
   st.push({view:"prefs", target:"#v-prefs .setrow", title:"Настройки", text:"Сколько слов учить за раз (от 5 до 25), с какого языка показывать карточки, какие упражнения включить и как озвучивать слова."});
   st.push({title:"Всё готово", text:"Добавьте первое слово или загрузите восемь слов для пробы на главной странице.", last:true});
