@@ -1013,7 +1013,12 @@ function authErr(e){
   if(c==="email_address_invalid"||m.includes("invalid email")) return "Проверьте адрес email.";
   if(m.includes("fetch")||m.includes("network")) return "Нет связи с сервером. Проверьте интернет.";
   if(c==="same_password") return "Новый пароль совпадает со старым.";
-  return "Не получилось. Попробуйте ещё раз.";
+  if(c==="signup_disabled"||m.includes("signups not allowed")) return "Регистрация на сервере выключена. Владельцу: Supabase → Authentication → Sign In / Providers → включите «Allow new users to sign up».";
+  if(c==="email_provider_disabled"||m.includes("email logins are disabled")) return "Вход по email выключен на сервере. Владельцу: Supabase → Authentication → Sign In / Providers → Email → Enable.";
+  if(c==="unexpected_failure"||m.includes("sending") && m.includes("email")) return "Сервер не смог отправить письмо подтверждения. Владельцу: Supabase → Authentication → Sign In / Providers → Email → выключите «Confirm email».";
+  if(c==="validation_failed"||c==="bad_json") return "Сервер не принял данные. Проверьте email и пароль.";
+  if(e?.status===401||e?.status===403||m.includes("invalid api key")||m.includes("apikey")) return "Сервер отклонил ключ доступа. Владельцу: проверьте ключ в config.js.";
+  return "Не получилось. Попробуйте ещё раз. (код: "+(c||e?.status||(e?.message||"неизвестно").slice(0,80))+")";
 }
 async function initAuth(){
   if(Store.mode==="claude") return;
