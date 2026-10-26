@@ -310,6 +310,8 @@ details.imp[open] summary::after{content:"−"}
 .sum-list{display:grid;gap:8px}
 .sum-row{display:flex;justify-content:space-between;gap:10px;padding:12px 16px;border-radius:16px;background:var(--surface);font-size:14px}
 .sum-row b{font-weight:700;overflow-wrap:anywhere}
+.qc-wrap{position:fixed;inset:0;z-index:25;background:rgba(17,19,42,.5);display:grid;place-items:center;padding:16px}
+.qc-box{background:var(--bg);border-radius:24px;padding:22px;max-width:420px;width:100%;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px}
 .sum-row .ok{color:var(--good);font-weight:600} .sum-row .no{color:var(--bad);font-weight:600}
 
 /* modal + toast */

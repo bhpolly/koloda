@@ -260,7 +260,7 @@ function renderSourceNote(){
   const el=$("#srcNote"); if(!el) return;
   el.innerHTML = SOURCE==="claude"
     ? "Переводы и примеры подбирает Claude."
-    : 'Переводы: <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a> · словарь, транскрипция и аудио: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener">Free Dictionary API</a>';
+    : 'Переводы: <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a> · словарь, транскрипция и аудио: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener">Free Dictionary API</a> · примеры: <a href="https://tatoeba.org" target="_blank" rel="noopener">Tatoeba</a>';
 }
 
 /* Free Dictionary API + MyMemory */
@@ -290,11 +290,13 @@ const FREE = {
   },
   async dict(word){
     const w=String(word).trim().replace(/^to\s+/i,"");
-    let r, j; try{ r=await fetchT("https://api.dictionaryapi.dev/api/v2/entries/en/"+encodeURIComponent(w)); }catch{ return null; }
-    if(r.status===429){ this.limited=Date.now(); return null; }
-    if(!r.ok) return null;
-    try{ j=await r.json(); }catch{ return null; }
-    if(!Array.isArray(j)) return null;
+    if(!w) return {state:"notfound"};
+    let r, j; try{ r=await fetchT("https://api.dictionaryapi.dev/api/v2/entries/en/"+encodeURIComponent(w)); }catch{ return {state:"net"}; }
+    if(r.status===429){ this.limited=Date.now(); return {state:"limit"}; }
+    if(r.status===404) return {state:"notfound"};
+    if(!r.ok) return {state:"net"};
+    try{ j=await r.json(); }catch{ return {state:"net"}; }
+    if(!Array.isArray(j) || !j.length) return {state:"notfound"};
     const phon=j.flatMap(e=>e.phonetics||[]);
     let ipa=j.find(e=>e.phonetic)?.phonetic || phon.find(p=>p.text)?.text || "";
     if(ipa && !ipa.startsWith("/")) ipa="/"+ipa.replace(/^\[|\]$/g,"")+"/";
@@ -302,7 +304,7 @@ const FREE = {
     const audio=auds.find(a=>/-uk\.mp3/.test(a)) || auds.find(a=>/-us\.mp3/.test(a)) || auds[0] || "";
     const meanings=j.flatMap(e=>e.meanings||[]).map(m=>({pos:m.partOfSpeech, defs:(m.definitions||[]).slice(0,3).map(d=>({def:d.definition, ex:d.example||""}))}));
     const examples=meanings.flatMap(m=>m.defs.filter(d=>d.ex).map(d=>d.ex)).slice(0,2).map(e=>({en:e, ru:""}));
-    return {ipa, audio, meanings, examples, pos: meanings.length===1 ? meanings[0].pos : (meanings[0]?.pos||"")};
+    return {state:"ok", ipa, audio, meanings, examples, pos: meanings.length===1 ? meanings[0].pos : (meanings[0]?.pos||"")};
   },
   async translateExamples(exs){
     for(const x of exs){ if(x.ru) continue; try{ x.ru = (await this.translate(x.en,"en","ru")).responseData?.translatedText || ""; }catch(e){ if(e.code==="quota") break; } }
@@ -311,6 +313,69 @@ const FREE = {
 };
 const draftAudio=new Map();
 function audioFor(text){ const n=norm(text); return draftAudio.get(n) || allCards().find(c=>c.audio && norm(c.en)===n)?.audio || ""; }
+
+/* ===== общий подбор транскрипции, звука и примеров: один и тот же для одиночного добавления и импорта ===== */
+const infoCache=new Map();
+const escRx = s => s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+async function tatoebaExamples(phrase, want=2){
+  const q=String(phrase).trim().replace(/^to\s+/i,"");
+  if(!q) return {items:[], state:"ok"};
+  let r, j;
+  try{ r=await fetchT("https://tatoeba.org/en/api_v0/search?from=eng&to=rus&trans_filter=limit&sort=relevance&query="+encodeURIComponent(q)); }catch{ return {items:[], state:"net"}; }
+  if(!r.ok) return {items:[], state:"net"};
+  try{ j=await r.json(); }catch{ return {items:[], state:"net"}; }
+  const toks=q.toLowerCase().split(/\s+/).filter(Boolean).map(t=>new RegExp("(^|[^a-z])"+escRx(t.slice(0,Math.max(3,t.length-2))),"i"));
+  const seen=new Set(), found=[];
+  for(const x of (Array.isArray(j?.results)?j.results:[])){
+    const en=str(x?.text,300).trim();
+    const tr=(Array.isArray(x?.translations)?x.translations.flat(2):[]).find(t=>t&&t.lang==="rus"&&str(t.text));
+    const ru=tr?str(tr.text,300).trim():"";
+    if(!en||!ru||en.length<12||en.length>110||ru.length>150||seen.has(norm(en))||!toks.every(rx=>rx.test(en))) continue;
+    seen.add(norm(en)); found.push({en,ru});
+  }
+  found.sort((a,b)=>Math.abs(a.en.length-50)-Math.abs(b.en.length-50));
+  return {items:found.slice(0,want), state:"ok"};
+}
+async function enrichInfo(en){
+  const key=norm(en);
+  if(infoCache.has(key)) return infoCache.get(key);
+  const p=(async()=>{
+    const out={ipa:"", pos:"", audio:"", examples:[], meanings:null, dict:"notfound", tat:"ok"};
+    const d=await FREE.dict(en);
+    out.dict=d.state;
+    if(d.state==="ok"){ out.ipa=d.ipa; out.pos=d.pos; out.audio=d.audio; out.meanings=d.meanings; }
+    const words=String(en).trim().replace(/^to\s+/i,"").split(/\s+/).filter(Boolean);
+    if(!out.ipa && words.length>1 && words.length<=4 && d.state!=="net" && d.state!=="limit"){ // фраза: собираем транскрипцию по словам
+      const parts=[];
+      for(const w of words){ const x=await infoCache.get("w:"+w.toLowerCase()) || await (async()=>{ const pr=FREE.dict(w); infoCache.set("w:"+w.toLowerCase(),pr); return pr; })(); if(x?.state==="ok" && x.ipa) parts.push(x.ipa.replace(/^\/|\/$/g,"")); else { parts.length=0; break; } }
+      if(parts.length===words.length) out.ipa="/"+parts.join(" ")+"/";
+    }
+    const t=await tatoebaExamples(en,2);
+    out.tat=t.state; out.examples=t.items.slice();
+    for(const x of (d.state==="ok"?d.examples:[])){ if(out.examples.length>=2) break; if(!out.examples.some(y=>norm(y.en)===norm(x.en))) out.examples.push({en:x.en, ru:""}); }
+    return out;
+  })();
+  infoCache.set(key,p);
+  const res=await p;
+  if(res.dict==="net"||res.dict==="limit"||res.tat==="net") infoCache.delete(key); // сбой сети не запоминаем, чтобы можно было повторить
+  if(res.audio) draftAudio.set(key,res.audio);
+  return res;
+}
+function applyInfo(c, info){
+  if(!c.ipa && info.ipa) c.ipa=info.ipa;
+  if(!c.pos && info.pos) c.pos=info.pos;
+  if(!c.audio && info.audio) c.audio=info.audio;
+  if(!c.examples?.length && info.examples.length) c.examples=info.examples.map(x=>({...x}));
+  return c;
+}
+function infoHint(info){
+  if(!info) return "";
+  const p=[];
+  if(info.dict==="net"||info.dict==="limit") p.push("Словарь сейчас не отвечает, поэтому транскрипции и записи произношения нет.");
+  else if(!info.ipa) p.push("В словаре нет такого слова или фразы, транскрипция не найдена.");
+  if(!info.examples.length) p.push(info.tat==="net"?"Сервис примеров не ответил.":"Примеры не нашлись.");
+  return p.join(" ");
+}
 async function askJSON(prompt, tier="default"){
   const sample = await getSample();
   if(!sample) throw {code:"none"};
@@ -367,10 +432,9 @@ async function lookup(){
       const r = await askJSON(lookupPrompt(text, lang));
       senses = (r?.senses||[]).filter(s=>s && s.en && s.ru).slice(0,6).map(s=>({...s, examples:(s.examples||[]).filter(x=>x&&x.en).slice(0,3)}));
     } else if(lang==="en"){
-      const [tr, d] = await Promise.all([FREE.translate(text,"en","ru"), FREE.dict(text)]);
-      if(d?.audio) draftAudio.set(norm(text), d.audio);
-      addState.meanings = d?.meanings || null;
-      senses = FREE.variants(tr, text).map(v=>({en:text, ru:v, ipa:d?.ipa||"", pos:d?.pos||"", audio:d?.audio||"", examples:(d?.examples||[]).map(x=>({...x})), free:true, enriched:true}));
+      const [tr, info] = await Promise.all([FREE.translate(text,"en","ru"), enrichInfo(text)]);
+      addState.meanings = info.meanings; addState.info = info;
+      senses = FREE.variants(tr, text).map(v=>({en:text, ru:v, ipa:info.ipa, pos:info.pos, audio:info.audio, examples:info.examples.map(x=>({...x})), free:true, enriched:true}));
     } else {
       const tr = await FREE.translate(text,"ru","en");
       senses = FREE.variants(tr, text).map(v=>({en:v, ru:text, examples:[], free:true, enriched:false}));
@@ -417,6 +481,7 @@ function renderAdd(){
       <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(c.ru)}</span></div></div>${sayBtn(c.en,"en",false)}</div>
       ${c.examples.length?`<ul class="ex-list">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`
         : `<div class="row small muted">Примеров пока нет. <button type="button" class="btn ghost" id="fetchEx" style="min-height:32px;padding:4px 8px">Подобрать примеры</button></div>`}
+      ${(!c.ipa || !c.examples.length) && st.info ? `<div class="small muted">${esc(infoHint(st.info))}</div>` : ""}
       <button type="button" class="btn primary wide" id="saveCard">Сохранить карточку</button>
     </div>`;
   }
@@ -425,8 +490,8 @@ function renderAdd(){
     st.sel=+b.dataset.sense; st.manual=""; st.manualEx=null; const v=st.senses[st.sel];
     if(v.free && !v.enriched){ // RU→EN: подтягиваем транскрипцию, аудио и примеры для выбранного английского слова
       v.enriched=true; renderAdd();
-      const d=await FREE.dict(v.en);
-      if(d){ v.ipa=d.ipa; v.pos=d.pos; v.audio=d.audio; v.examples=d.examples; if(d.audio) draftAudio.set(norm(v.en), d.audio); }
+      const info=await enrichInfo(v.en);
+      v.ipa=info.ipa; v.pos=info.pos; v.audio=info.audio; v.examples=info.examples.map(x=>({...x})); st.info=info; st.meanings=info.meanings;
     }
     renderAdd(); autoSpeak(v.en,"en");
   });
@@ -454,10 +519,10 @@ async function fetchManualExamples(){
   try{
     if(await getSample()){ const r=await askJSON(examplesPrompt([c]),"quick"); const x=Array.isArray(r)?r[0]:null; addState.manualEx = {ipa:x?.ipa||"", pos:x?.pos||"", examples:(x?.examples||[]).filter(e=>e?.en).slice(0,3)}; }
     else {
-      const d=await FREE.dict(c.en);
-      if(!d || !d.examples.length) toast("В словаре нет примеров для этого слова — их можно вписать в карточке вручную");
-      if(d?.audio) draftAudio.set(norm(c.en), d.audio);
-      addState.manualEx = {ipa:d?.ipa||"", pos:d?.pos||"", audio:d?.audio||"", examples:d?.examples||[]};
+      const info=await enrichInfo(c.en);
+      addState.info=info;
+      if(!info.examples.length) toast(infoHint(info)||"Примеры не нашлись, их можно вписать в карточке вручную");
+      addState.manualEx = {ipa:info.ipa, pos:info.pos, audio:info.audio, examples:info.examples.map(x=>({...x}))};
     }
   }
   catch(e){ toast(lookupErrorText(e)); }
@@ -548,48 +613,62 @@ $("#impBtn").onclick = async ()=>{
     const made=ready.map(x=>newCard({en:x.en, ru:x.ru}));
     made.forEach(c=>Store.saveCard(c));
     renderList();
-    // 3. дополняем транскрипцией, аудио и примерами
-    let withInfo=0, noInfo=0, stopped=false;
-    if($("#impEx").checked && made.length){
-      let n=0; const total=made.length; btn.textContent=`Остановить · 0/${total}`;
-      const stopNow=()=>impStop;
-      if(sample){
-        for(let i=0;i<made.length && !impStop;i+=25){
-          const chunk=made.slice(i,i+25);
-          try{
-            const r=await askJSON(examplesPrompt(chunk),"quick");
-            (Array.isArray(r)?r:[]).forEach(x=>{ const c=chunk[x?.i]; if(!c) return; c.ipa=str(x.ipa,100); c.pos=str(x.pos,40); c.examples=(Array.isArray(x.examples)?x.examples:[]).filter(e=>e?.en).slice(0,3).map(e=>({en:str(e.en,300),ru:str(e.ru,300)})); Store.saveCard(c); withInfo++; });
-          }catch{}
-          n+=chunk.length; btn.textContent=`Остановить · ${Math.min(n,total)}/${total}`;
-        }
-      } else {
-        await pool(made, 3, async c=>{
-          if(Date.now()-FREE.limited<60000) { noInfo++; n++; return; }
-          const d=await FREE.dict(c.en);
-          if(d && (d.ipa||d.examples.length||d.audio)){ Object.assign(c,{ipa:d.ipa, pos:d.pos, audio:d.audio, examples:d.examples}); Store.saveCard(c); withInfo++; } else noInfo++;
-          btn.textContent=`Остановить · ${++n}/${total}`;
-        }, stopNow);
-      }
-      stopped=impStop;
-      if(!sample) noInfo=made.length-withInfo;
-    }
+    // 3. дополняем транскрипцией, звуком и примерами тем же способом, что и при одиночном добавлении
+    lastImport={ids:made.map(c=>c.id), skipped:[...skipped,...failed]};
+    let stopped=false;
+    if($("#impEx").checked && made.length){ await enrichCards(made, sample, btn); stopped=impStop; }
     // 4. отчёт
-    const allSkipped=[...skipped,...failed];
+    const allSkipped=lastImport.skipped;
     const keep=allSkipped.filter(([,why])=>why!=="уже есть").map(([l])=>l);
     $("#impText").value=keep.join("\n");
-    let msg=`Добавлено ${made.length} ${plural(made.length,"слово","слова","слов")}.`;
-    if($("#impEx").checked && made.length){
-      msg += ` Транскрипция и примеры: ${withInfo} из ${made.length}.`;
-      if(stopped) msg+=" Дополнение остановлено, остальные слова остались без примеров.";
-      else if(noInfo && !sample) msg+=" Для остальных словарь ничего не нашёл (так бывает с фразами): примеры можно вписать в карточке.";
-      if(!sample && Date.now()-FREE.limited<60000) msg+=" Словарь временно ограничил запросы, попробуйте позже.";
-    }
-    res.innerHTML=`<div class="feedback ${made.length?"ok":"no"} small">${esc(msg)}${reportSkipped(allSkipped)}</div>`;
+    renderImportReport(made.length, stopped);
     toast(`Добавлено ${made.length} ${plural(made.length,"слово","слова","слов")}`);
   } finally {
     impBusy=false; impStop=false; btn.disabled=false; btn.textContent="Импортировать"; renderList();
   }
 };
+let lastImport={ids:[],skipped:[]};
+async function enrichCards(cards, sample, btn){
+  let n=0; const total=cards.length;
+  const setBtn=()=>{ btn.textContent=`Остановить · ${Math.min(n,total)}/${total}`; }; setBtn();
+  if(sample){
+    for(let i=0;i<cards.length && !impStop;i+=25){
+      const chunk=cards.slice(i,i+25);
+      try{
+        const r=await askJSON(examplesPrompt(chunk),"quick");
+        (Array.isArray(r)?r:[]).forEach(x=>{ const c=chunk[x?.i]; if(!c) return; c.ipa=str(x.ipa,100); c.pos=str(x.pos,40); c.examples=(Array.isArray(x.examples)?x.examples:[]).filter(e=>e?.en).slice(0,3).map(e=>({en:str(e.en,300),ru:str(e.ru,300)})); Store.saveCard(c); });
+      }catch{}
+      n+=chunk.length; setBtn();
+    }
+  } else {
+    await pool(cards, 3, async c=>{
+      const info=await enrichInfo(c.en);
+      applyInfo(c, info);
+      if(c.examples.some(x=>!x.ru)) await FREE.translateExamples(c.examples);
+      Store.saveCard(c); n++; setBtn();
+    }, ()=>impStop);
+  }
+}
+function renderImportReport(addedNow, stopped, retry=false){
+  const cs=lastImport.ids.map(id=>Store.cards.get(id)).filter(Boolean), N=cs.length;
+  const ipa=cs.filter(c=>c.ipa).length, ex=cs.filter(c=>c.examples?.length).length, au=cs.filter(c=>c.audio).length;
+  let msg=retry ? "Дополнение завершено." : `Добавлено ${addedNow} ${plural(addedNow,"слово","слова","слов")}.`;
+  if(retry || ($("#impEx").checked && N)){
+    msg+=` Транскрипция: ${ipa} из ${N}, примеры: ${ex} из ${N}, запись произношения: ${au} из ${N}. Остальные слова озвучит голос браузера.`;
+    if(stopped) msg+=" Подбор остановлен.";
+  }
+  const missing=cs.filter(c=>!c.ipa || !c.examples?.length).length;
+  $("#impResult").innerHTML=`<div class="feedback ${addedNow?"ok":"no"} small">${esc(msg)}${missing && N?`<div class="row" style="margin-top:8px"><button class="btn" id="impRetry" type="button">Дополнить недостающее (${missing})</button></div>`:""}${reportSkipped(lastImport.skipped)}</div>`;
+  const rb=$("#impRetry"); if(rb) rb.onclick=retryImport;
+}
+async function retryImport(){
+  if(impBusy) return;
+  const cs=lastImport.ids.map(id=>Store.cards.get(id)).filter(c=>c && (!c.ipa || !c.examples?.length));
+  if(!cs.length) return;
+  impBusy=true; impStop=false; const btn=$("#impBtn"); btn.textContent="Остановить";
+  try{ await enrichCards(cs, await getSample(), btn); }
+  finally{ const st=impStop; impBusy=false; impStop=false; btn.textContent="Импортировать"; renderList(); renderImportReport(0, st, true); }
+}
 function reportSkipped(sk){
   if(!sk.length) return "";
   return `<details style="margin-top:8px" open><summary class="small" style="cursor:pointer;font-weight:700">Не добавлено: ${sk.length}</summary><ul style="margin:6px 0 0;padding-left:18px">${sk.map(([l,why])=>`<li>${esc(l)} <span class="muted">— ${esc(why)}</span></li>`).join("")}</ul></details>`;
@@ -628,13 +707,29 @@ function openEdit(id){
     <label class="f">Русский<input class="input" id="e-ru" value="${esc(c.ru)}"></label>
     <label class="f">Транскрипция<input class="input" id="e-ipa" value="${esc(c.ipa)}"></label>
     <label class="f">Примеры: по одному в строке, «English | перевод»<textarea class="input" id="e-ex">${esc(c.examples.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n"))}</textarea></label>
+    ${SOURCE==="free"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
     <div class="small muted">Следующее повторение: ${dueLabel(c)} · повторений: ${c.reps}</div>
     <div class="row" id="e-actions" style="justify-content:space-between">
       <div class="row"><button class="btn danger" id="e-del">Удалить</button><button class="btn ghost" id="e-reset">Сбросить прогресс</button></div>
       <div class="row"><button class="btn" id="e-cancel">Отмена</button><button class="btn primary" id="e-save">Сохранить</button></div>
     </div>`);
   $("#e-cancel").onclick=closeModal;
+  let pendAudio="", pendPos="";
+  if($("#e-fetch")) $("#e-fetch").onclick=async ()=>{
+    const b=$("#e-fetch"), msg=$("#e-fetchMsg"); b.disabled=true; msg.textContent="Ищу…";
+    const info=await enrichInfo($("#e-en").value.trim()||c.en);
+    if(!$("#e-ipa").value.trim() && info.ipa) $("#e-ipa").value=info.ipa;
+    if(!$("#e-ex").value.trim() && info.examples.length){
+      const exs=info.examples.map(x=>({...x})); if(exs.some(x=>!x.ru)) await FREE.translateExamples(exs);
+      $("#e-ex").value=exs.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n");
+    }
+    pendAudio=info.audio; pendPos=info.pos;
+    const got=[info.ipa&&"транскрипция", info.examples.length&&"примеры", info.audio&&"запись произношения"].filter(Boolean);
+    msg.textContent = got.length ? "Нашлось: "+got.join(", ")+". Нажмите «Сохранить»." : (infoHint(info)||"Ничего не нашлось.");
+    b.disabled=false;
+  };
   $("#e-save").onclick=()=>{
+    if(pendAudio && !c.audio) c.audio=pendAudio; if(pendPos && !c.pos) c.pos=pendPos;
     c.en=$("#e-en").value.trim()||c.en; c.ru=$("#e-ru").value.trim()||c.ru; c.ipa=$("#e-ipa").value.trim();
     c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); return {en, ru:ru||""}; });
     Store.saveCard(c); closeModal(); renderAll(); toast("Сохранено");
@@ -936,6 +1031,7 @@ function stepTyping(round, id){
 }
 document.addEventListener("keydown", e=>{
   if($("#sess").hidden) return;
+  if($("#qc")){ if(e.key==="Escape") $("#qc").remove(); return; }
   if(e.key==="Escape"){ askClose(); return; }
   const round=sess?.rounds[sess.r]; if(!round) return;
   if(round.type==="letters" && sess.keyHandler && !e.ctrlKey && !e.metaKey){ sess.keyHandler(e); return; }
@@ -944,11 +1040,16 @@ document.addEventListener("keydown", e=>{
 });
 function askClose(){
   if(!sess || sess.finished){ closeSess(); return; }
-  body().insertAdjacentHTML("afterbegin", `<div class="feedback no" id="qc"><div style="margin-bottom:8px">Прервать тренировку? Прогресс этой тренировки не сохранится.</div><div class="row"><button class="btn" id="qn">Продолжить</button><button class="btn primary" id="qy">Выйти</button></div></div>`);
-  $("#qn").onclick=()=>$("#qc").remove(); $("#qy").onclick=closeSess;
+  if($("#qc")) return; // окно подтверждения уже открыто: второе не создаём
+  const w=document.createElement("div"); w.id="qc"; w.className="qc-wrap"; w.setAttribute("role","dialog"); w.setAttribute("aria-modal","true");
+  w.innerHTML=`<div class="qc-box"><b style="font-size:18px">Прервать тренировку?</b><span class="muted small">Прогресс этой тренировки не сохранится.</span><div class="row"><button class="btn" id="qn" type="button">Продолжить</button><button class="btn primary" id="qy" type="button">Выйти</button></div></div>`;
+  $("#sess").appendChild(w);
+  $("#qn").onclick=()=>w.remove(); $("#qy").onclick=closeSess;
+  w.addEventListener("click",e=>{ if(e.target===w) w.remove(); });
+  $("#qn").focus();
 }
 $("#sessClose").onclick=askClose;
-function closeSess(){ try{ speechSynthesis.cancel(); }catch{} $("#sess").hidden=true; document.body.style.overflow=""; sess=null; renderAll(); }
+function closeSess(){ try{ speechSynthesis.cancel(); }catch{} $("#qc")?.remove(); $("#sess").hidden=true; document.body.style.overflow=""; sess=null; renderAll(); }
 
 function finish(){
   sess.finished=true; updateBar();
@@ -1059,7 +1160,7 @@ function renderPrefs(){
   <div class="panel">
     <div class="label" style="margin-bottom:4px">Данные</div>
     <div class="setrow"><div class="lbl"><b>Хранение</b><span>${Store.mode==="claude"?"в вашем аккаунте Claude, видно с любого устройства":Store.mode==="supa"?"в вашем аккаунте, видно на любом устройстве после входа":"только в этом браузере — войдите в аккаунт или делайте резервную копию"}</span></div></div>
-    <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"MyMemory + Free Dictionary API"}</span></div></div>
+    <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
     ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Email для MyMemory</b><span>Необязательно. Переводчик MyMemory бесплатно переводит около 5 000 символов в день, это примерно 30–50 новых карточек. Если указать email, лимит вырастет до 50 000. Подтверждать почту не нужно, адрес уходит только в MyMemory и сохраняется в ваших настройках.</span></div><input class="input" id="mmEmail" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(s.mmEmail||"")}" style="max-width:260px"></div>`:""}
     <div class="setrow"><div class="lbl"><b>Резервная копия</b><span>скопировать колоду как JSON или вставить ранее сохранённую</span></div><div class="row"><button class="btn" id="exp">Копировать</button><button class="btn" id="imp">Вставить</button></div></div>
     <div class="setrow"><div class="lbl"><b>Очистить колоду</b><span>удалить все карточки и статистику</span></div><button class="btn danger" id="wipe">Очистить</button></div>
@@ -1288,7 +1389,7 @@ function openPrivacy(back){
     <p>Каждая строчка базы привязана к вашему аккаунту, а правила доступа на сервере пропускают к ней только вас. Другие пользователи не могут ни прочитать, ни изменить ваши карточки.</p>
     <p>Автор сайта как владелец проекта технически имеет доступ к панели управления базой. Данные не продаются, не передаются третьим лицам и не используются для рекламы.</p>
     <h3>Внешние сервисы</h3>
-    <p>Чтобы подобрать перевод, слово, которое вы вводите, отправляется в <a href="https://mymemory.translated.net" target="_blank" rel="noopener noreferrer">MyMemory</a> и <a href="https://dictionaryapi.dev" target="_blank" rel="noopener noreferrer">Free Dictionary API</a>. Уходит только само слово или пример, без email и без привязки к аккаунту. Email уходит в MyMemory, только если вы сами укажете его в настройках для увеличения лимита.</p>
+    <p>Чтобы подобрать перевод, транскрипцию и примеры, слово, которое вы вводите, отправляется в <a href="https://mymemory.translated.net" target="_blank" rel="noopener noreferrer">MyMemory</a>, <a href="https://dictionaryapi.dev" target="_blank" rel="noopener noreferrer">Free Dictionary API</a> и <a href="https://tatoeba.org" target="_blank" rel="noopener noreferrer">Tatoeba</a>. Эти сервисы видят ваш IP-адрес, как любой сайт, к которому вы обращаетесь. Уходит только само слово или пример, без email и без привязки к аккаунту. Email уходит в MyMemory, только если вы сами укажете его в настройках для увеличения лимита.</p>
     <p>При входе через Google аккаунт Google лишь подтверждает вашу личность; слова в Google не передаются.</p>
     <p>На сайте нет рекламы, счётчиков и сторонней аналитики. Шрифты и библиотеки загружаются с этого же сайта.</p>
     <h3>Ваши права</h3>
