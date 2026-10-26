@@ -18,7 +18,7 @@ function lsGet(k, d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(
 function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", strict:false, modes:{choice:true, match:true, letters:true, typing:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", modes:{choice:true, match:true, letters:true, typing:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -31,7 +31,7 @@ function sanitizeCard(c){
   const id = /^[\w-]{1,64}$/.test(c.id) ? c.id : uid();
   return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
     examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>({en:str(x?.en,300), ru:str(x?.ru,300)})).filter(x=>x.en),
-    created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
+    created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
 function sanitizeSettings(s){
   const o=structuredClone(DEFAULTS); if(!s||typeof s!=="object") return o;
@@ -39,7 +39,7 @@ function sanitizeSettings(s){
   if(["en","ru"].includes(s.first)) o.first=s.first;
   if(["off","en","both"].includes(s.audio)) o.audio=s.audio;
   if(+s.rate>=0.5 && +s.rate<=1.5) o.rate=+s.rate;
-  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30); o.strict=!!s.strict;
+  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30);
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -212,7 +212,7 @@ function setSync(){
   renderAcct();
 }
 /* ============ cards ============ */
-function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, last:0, demo:!!f.demo }; }
+function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, last:0, demo:!!f.demo }; }
 const status = c => !c.box ? "new" : (c.box>=4 ? "known" : "learning");
 const isDue = c => c.box>0 && c.due <= Date.now();
 const allCards = () => [...Store.cards.values()];
@@ -781,8 +781,8 @@ function openEdit(id){
     Store.saveCard(c); closeModal(); renderAll(); toast("Сохранено");
   };
   if($("#e-master")) $("#e-master").onclick=()=>{ masterCard(c); closeModal(); renderAll(); toast("Слово выучено: прогресс 100%"); };
-  if($("#e-prac")) $("#e-prac").onclick=()=>{ closeModal(); buildSession("practice",[c]); };
-  $("#e-reset").onclick=()=>{ c.box=0; c.due=0; c.reps=0; Store.saveCard(c); closeModal(); renderAll(); toast("Слово снова новое"); };
+  if($("#e-prac")) $("#e-prac").onclick=()=>{ closeModal(); runSeen=new Set(); buildSession("practice",[c]); };
+  $("#e-reset").onclick=()=>{ c.box=0; c.due=0; c.reps=0; c.fails=0; Store.saveCard(c); closeModal(); renderAll(); toast("Слово снова новое"); };
   $("#e-del").onclick=()=>{
     $("#e-actions").innerHTML=`<span class="small">Удалить «${esc(c.en)}» насовсем?</span><div class="row"><button class="btn" id="e-no">Нет</button><button class="btn primary" id="e-yes" style="background:var(--bad);border-color:var(--bad)">Удалить</button></div>`;
     $("#e-no").onclick=()=>openEdit(id);
@@ -838,27 +838,27 @@ function renderLearn(){
     bindGo(el); return;
   }
   const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
-  const dc=deckCards(), ahead=aheadCards().length, fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, n=Math.min(S().batch, fresh);
+  const dc=deckCards(), fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, todo=fresh+due, closed=dc.filter(closedLevel).length, n=Math.min(S().batch, todo), nP=Math.min(S().batch, closed);
   const deckBar = tagsAll.length ? `<div class="deckbar"><span class="label">Подборка<button class="tip" type="button" aria-label="Пояснение" data-tip="Выберите тег, и тренировка возьмёт только слова с ним. Подборку можно сменить в любой момент. Прогресс у слова один на все подборки: выученное слово вернётся на повторение только в свой срок, даже если оно есть в другой подборке.">?</button></span><div class="filters" id="deckChips"><button type="button" data-deck="" aria-pressed="${!S().deck}" ${tipAttr("Учить все слова колоды")}>Все слова · ${cs.length}</button>${tagsAll.map(([t,k])=>`<button type="button" data-deck="${esc(t)}" aria-pressed="${S().deck===t}" ${tipAttr("Учить и повторять только слова с тегом «"+t+"»")}>${esc(t)} · ${k}</button>`).join("")}</div></div>` : "";
   const st=streakInfo(), today=Store.stats.days?.[dayKey()];
-  const cta = due ? `<button class="btn primary" data-start="review">Повторить</button>${fresh?`<button class="btn ghost" data-start="learn">Учить новые</button>`:""}`
-            : fresh ? `<button class="btn primary" data-start="learn">Начать обучение</button>`
+  const cta = todo ? `<button class="btn primary" data-start="learn">Начать обучение</button>`
+            : closed ? `<button class="btn primary" data-start="practice">Тренировать</button>`
             : `<button class="btn primary" data-go="words">Добавить слово</button>`;
   el.innerHTML = heroHtml(cta) + deckBar + `
   <div class="sec-head"><h2>Сегодня в колоде</h2><button class="pill-link" data-go="stats">Прогресс</button></div>
   <div class="grid3">
     <div class="ftile lime">
-      <div class="label">Новые слова</div>
-      <div class="bignum">${fresh}</div>
-      <p>${fresh?`${plural(fresh,"слово ждёт","слова ждут","слов ждут")} знакомства`:"Все слова уже в работе — добавьте новые"}</p>
-      <button class="btn" data-start="learn" ${fresh?"":"disabled"}>${fresh?`Учить ${n} ${plural(n,"слово","слова","слов")}`:"Новых нет"}</button>
+      <div class="label">К изучению</div>
+      <div class="bignum">${todo}</div>
+      <p>${todo?`${fresh} ${plural(fresh,"новое","новых","новых")} · ${due} на повторении`:"Всё изучено на текущих уровнях. Добавьте новые слова"}</p>
+      <button class="btn" data-start="learn" ${todo?"":"disabled"} ${tipAttr("Подборка из слов, у которых текущий уровень ещё не закрыт: новые и те, у которых пришёл срок повтора. Без ошибок уровень растёт, с ошибками слово остаётся в подборке.")}>${todo?`Учить ${n} ${plural(n,"слово","слова","слов")}`:"Нечего учить"}</button>
       <span class="deco ring"></span>
     </div>
     <div class="ftile">
-      <div class="label">Повторение</div>
-      <div class="bignum">${due}</div>
-      <p>${due?"пора освежить в памяти":"на сегодня всё повторено"}</p>
-      <button class="btn ${due?"pink":""}" data-start="review" ${due?"":"disabled"}>${due?"Повторить":"Готово"}</button>
+      <div class="label">Тренировка</div>
+      <div class="bignum">${closed}</div>
+      <p>${closed?"слов можно потренировать для себя":"пока нет слов с закрытым уровнем"}</p>
+      <button class="btn ${closed?"pink":""}" data-start="practice" ${closed?"":"disabled"} ${tipAttr("Слова, у которых текущий уровень уже закрыт и срок повтора не пришёл. Тренироваться можно сколько угодно: уровень слов не меняется.")}>${closed?`Тренировать ${nP}`:"Тренировать"}</button>
       <span class="deco stackc"><i></i><i></i><i></i></span>
     </div>
     <div class="ftile pinky">
@@ -869,13 +869,12 @@ function renderLearn(){
       <button class="btn" data-go="words">+ Новое слово</button>
     </div>
   </div>
-  ${ahead?`<div class="panel row" style="justify-content:space-between;gap:12px"><div><b>Потренироваться вне графика</b><div class="small muted">Слова, которые вы уже учили и срок повтора ещё не пришёл (${ahead}). Можно тренировать сколько угодно, уровень слов при этом не меняется.</div></div><button class="btn" data-start="practice" ${tipAttr("Знакомство и упражнения, как в обычном обучении, но без влияния на прогресс. Слово вернётся на повторение, когда придёт срок.")}>Потренировать ${Math.min(S().batch,ahead)}</button></div>`:""}
   ${AUTH.enabled && Store.mode==="local" ? `<div class="ftile nudge"><div><h3>Сохраните слова в аккаунте</h3><p>Сейчас колода живёт только в этом браузере. С аккаунтом слова не потеряются и будут на любом устройстве.</p></div><div class="row"><button class="btn primary" data-auth="signup">Регистрация</button><button class="btn" data-auth="signin">Вход</button></div></div>` : ""}
   <div class="sec-head"><h2>Недавно добавленные</h2><button class="pill-link" data-go="words">Все слова</button></div>
   <div class="grid2">
     ${cs.sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>`;
-  el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : b.dataset.start==="practice" ? startPractice() : startReview());
+  el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startPractice());
   el.querySelectorAll("[data-deck]").forEach(b=>b.onclick=()=>{ hideTip(); S().deck=b.dataset.deck; Store.saveSettings(); renderLearn(); });
   el.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>openAuth(b.dataset.auth));
   bindGo(el);
@@ -887,31 +886,31 @@ const FILLER = [["house","дом"],["window","окно"],["to borrow","одал�
 let sess=null;
 function modesOn(){ const m=S().modes; return m; }
 function deckCards(){ const t=S().deck; return t ? allCards().filter(c=>c.tags.includes(t)) : allCards(); }
-function startLearn(){
-  const list=deckCards().filter(c=>!c.box).sort((a,b)=>a.created-b.created).slice(0,S().batch);
-  if(list.length) buildSession("learn", list);
+/* подборки: слова текущего run (цепочка «Изучать далее») повторно не предлагаем */
+let runSeen=new Set();
+const closedLevel = c => c.box>0 && !isDue(c);          // уровень закрыт: срок повтора ещё не пришёл
+function pickPool(kind){
+  const base=deckCards().filter(c=>!runSeen.has(c.id));  // 1) тег (если выбран)  2) критерий уровня
+  if(kind==="practice") return base.filter(closedLevel).sort((a,b)=>(a.last||0)-(b.last||0));
+  return base.filter(c=>!closedLevel(c)).sort((a,b)=> (a.box>0?0:1)-(b.box>0?0:1) || (a.box>0 ? a.due-b.due : a.created-b.created));
 }
-function aheadCards(){ return deckCards().filter(c=>c.box>0 && !isDue(c)).sort((a,b)=>(a.last||0)-(b.last||0)); }
-function startPractice(){ const list=aheadCards().slice(0,S().batch); if(list.length) buildSession("practice", list); }
-function startReview(){
-  const list=deckCards().filter(isDue).sort((a,b)=>a.due-b.due).slice(0,Math.max(30,S().batch*2));
-  if(list.length) buildSession("review", list);
+function startRun(kind, fresh=true){
+  if(fresh) runSeen=new Set();
+  const list=pickPool(kind).slice(0,S().batch);
+  if(list.length) buildSession(kind, list);
 }
+const startLearn=(fresh=true)=>startRun("learn",fresh);
+const startPractice=(fresh=true)=>startRun("practice",fresh);
 function buildSession(kind, list){
   const m=modesOn(), ids=list.map(c=>c.id), rounds=[];
-  if(kind!=="review"){
-    rounds.push({type:"intro", queue:ids.slice()});
-    if(m.choice) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
-    if(m.match && ids.length>=2){ const sh=shuffle(ids), ch=[]; for(let i=0;i<sh.length;i+=5) ch.push(sh.slice(i,i+5)); if(ch.length>1 && ch[ch.length-1].length<2){ ch[ch.length-2].push(...ch.pop()); } rounds.push({type:"match", queue:ch}); }
-    if(m.choice) rounds.push({type:"choice", dir:"rev", queue:shuffle(ids)});
-    if(m.letters) rounds.push({type:"letters", queue:shuffle(ids)});
-    if(m.typing) rounds.push({type:"typing", queue:shuffle(ids)});
-    if(rounds.length===1) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
-  } else {
-    if(m.choice || (!m.typing && !m.letters)) rounds.push({type:"choice", dir:"rev", queue:shuffle(ids)});
-    if(m.typing) rounds.push({type:"typing", queue:shuffle(ids)});
-    else if(m.letters) rounds.push({type:"letters", queue:shuffle(ids)});
-  }
+  ids.forEach(i=>runSeen.add(i));
+  rounds.push({type:"intro", queue:ids.slice()});
+  if(m.choice) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
+  if(m.match && ids.length>=2){ const sh=shuffle(ids), ch=[]; for(let i=0;i<sh.length;i+=5) ch.push(sh.slice(i,i+5)); if(ch.length>1 && ch[ch.length-1].length<2){ ch[ch.length-2].push(...ch.pop()); } rounds.push({type:"match", queue:ch}); }
+  if(m.choice) rounds.push({type:"choice", dir:"rev", queue:shuffle(ids)});
+  if(m.letters) rounds.push({type:"letters", queue:shuffle(ids)});
+  if(m.typing) rounds.push({type:"typing", queue:shuffle(ids)});
+  if(rounds.length===1) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
   sess={kind, ids, rounds, r:0, done:0, mistakes:Object.fromEntries(ids.map(i=>[i,0])), skipped:new Set(), answers:0, right:0, busy:false};
   sess.total = rounds.reduce((s,r)=>s+r.queue.length,0);
   $("#sess").hidden=false; document.body.style.overflow="hidden";
@@ -957,6 +956,16 @@ function stepIntro(round, id){
   $("#iKnow").onclick=()=>{
     sess.skipped.add(id);
     for(const r of sess.rounds){ if(r.type==="intro") continue; if(r.type==="match"){ r.queue=r.queue.map(g=>g.filter(x=>x!==id)).filter(g=>g.length>=2); } else r.queue=r.queue.filter(x=>x!==id); }
+    // на место слова, которое пользователь уже знает, берём следующее из подборки
+    const rep=pickPool(sess.kind).find(x=>!sess.ids.includes(x.id));
+    if(rep){
+      runSeen.add(rep.id); sess.ids.push(rep.id); sess.mistakes[rep.id]=0;
+      for(const r of sess.rounds){
+        if(r.type==="intro") r.queue.push(rep.id);
+        else if(r.type==="match"){ if(r.queue.length) r.queue[r.queue.length-1].push(rep.id); }
+        else r.queue.splice(Math.floor(Math.random()*(r.queue.length+1)),0,rep.id);
+      }
+    }
     sess.total = sess.done + sess.rounds.reduce((s,r)=>s+r.queue.length,0);
     done(true);
   };
@@ -1108,44 +1117,43 @@ function closeSess(){ try{ speechSynthesis.cancel(); }catch{} $("#qc")?.remove()
 
 function finish(){
   sess.finished=true; updateBar();
-  const now=Date.now(), rows=[], strict=!!S().strict, practice=sess.kind==="practice";
+  const now=Date.now(), rows=[], practice=sess.kind==="practice", kind=sess.kind;
+  let learnedN=0, reviewedN=0;
   for(const id of sess.ids){
     const c=cardOf(id); if(!c) continue;
-    const m=sess.mistakes[id], skip=!practice && sess.skipped.has(id);
-    let note="";
-    if(practice){ rows.push({c,m,skip:false}); continue; }   // тренировка вне графика: прогресс не трогаем
-    let backNow=false;
-    if(skip){ c.box=4; }
-    else if(sess.kind==="learn"){
-      if(strict && m>0){ c.box=0; c.due=0; note="останется в изучении"; }
-      else c.box = m===0 ? 2 : 1;
+    const m=sess.mistakes[id], skip=sess.skipped.has(id), wasNew=!c.box;
+    if(practice){ rows.push({c,m,skip,ok:!m,note:""}); continue; }   // тренировка: прогресс не трогаем
+    let ok=false, note="";
+    if(skip || m===0){
+      c.box = skip ? (wasNew?4:Math.min(7,c.box+1)) : (wasNew?2:Math.min(7,c.box+1));
+      c.fails=0; c.due=startOfDay(now)+INTERVALS[c.box]*DAY; c.reps++; ok=true;
+      wasNew?learnedN++:reviewedN++;
     } else {
-      if(m===0) c.box=Math.min(7,c.box+1);
-      else if(strict || m>=2){ c.box=1; c.lapses++; backNow=strict; }
+      if(c.fails>=1 && c.box>1){ c.box--; c.lapses++; note=`уровень снижен до ${c.box}`; }
+      else note = c.fails>=1 ? "не изучено, уровень остаётся" : "не изучено, слово останется в подборке";
+      c.fails=Math.min(99,c.fails+1);
     }
-    if(c.box>0) c.due = backNow ? now : startOfDay(now) + INTERVALS[c.box]*DAY;
-    c.reps++; c.last=now;
-    Store.saveCard(c);
-    rows.push({c, m, skip, note});
+    c.last=now; Store.saveCard(c);
+    rows.push({c,m,skip,ok,note});
   }
   const k=dayKey(); const d=Store.stats.days[k] ||= {n:0,learned:0,reviewed:0,right:0,total:0};
-  d.n+=rows.length; if(!practice) d[sess.kind==="learn"?"learned":"reviewed"]+=rows.length; d.right+=sess.right; d.total+=sess.answers;
+  d.n+=rows.length; d.learned+=learnedN; d.reviewed+=reviewedN; d.right+=sess.right; d.total+=sess.answers;
   Store.saveStats();
   const acc = sess.answers ? Math.round(sess.right/sess.answers*100) : 100;
-  const dueCount=allCards().filter(isDue).length, fresh=allCards().filter(c=>!c.box).length;
-  const clean=rows.filter(r=>!r.m).length;
-  const title = practice?"Тренировка завершена":sess.kind==="learn"?"Обучение завершено":"Повторение завершено";
+  const clean=rows.filter(r=>!r.m).length, okN=rows.filter(r=>r.ok).length;
+  const more=pickPool(kind).length;
+  const title = practice?"Тренировка завершена":"Обучение завершено";
+  const sub = practice ? "Прогресс слов не изменился: они вернутся на повторение в свой срок." : `Изучено на текущем уровне: ${okN} из ${rows.length}`;
   body().innerHTML = `<div class="flash" style="gap:6px"><div class="label">${title}</div>
-    <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div>${practice?`<div class="small muted">Прогресс слов не изменился: они вернутся на повторение в свой срок.</div>`:""}</div>
-    <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.m?"no":"ok"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${r.note||dueLabel(r.c)}</span></div>`).join("")}</div>
-    <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 180 дней).">Считать выученными (${clean})</button>`:""}${dueCount?`<button class="btn mark" id="more2">Повторить (${dueCount})</button>`:""}${fresh?`<button class="btn primary" id="more">Ещё ${Math.min(S().batch,fresh)} новых</button>`:""}<button class="btn" id="fin">Готово</button></div>`;
+    <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div><div class="small muted">${sub}</div></div>
+    <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.ok?"ok":"no"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${practice?dueLabel(r.c):r.ok?dueLabel(r.c):r.note}</span></div>`).join("")}</div>
+    <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 180 дней).">Считать выученными (${clean})</button>`:""}${more?`<button class="btn primary" id="more">${practice?"Тренировать далее":"Изучать далее"}</button>`:""}<button class="btn" id="fin">Закончить</button></div>`;
   $("#fin").onclick=closeSess;
   if($("#master")) $("#master").onclick=()=>{ rows.filter(r=>!r.m).forEach(r=>masterCard(r.c)); toast("Слова отмечены выученными"); $("#master").remove(); };
-  if($("#more")) $("#more").onclick=()=>{ sess=null; startLearn(); };
-  if($("#more2")) $("#more2").onclick=()=>{ sess=null; startReview(); };
+  if($("#more")) $("#more").onclick=()=>{ sess=null; startRun(kind,false); };
 }
 /* вручную сделать слово выученным: прогресс 100% */
-function masterCard(c){ const now=Date.now(); c.box=7; c.due=startOfDay(now)+INTERVALS[7]*DAY; c.reps++; c.last=now; Store.saveCard(c); }
+function masterCard(c){ const now=Date.now(); c.box=7; c.fails=0; c.due=startOfDay(now)+INTERVALS[7]*DAY; c.reps++; c.last=now; Store.saveCard(c); }
 
 /* ============ progress ============ */
 function renderStats(){
@@ -1221,7 +1229,6 @@ function renderPrefs(){
   <div class="panel">
     <div class="label" style="margin-bottom:4px">Обучение</div>
     <div class="setrow"><div class="lbl"><b>Слов за одну тренировку</b><span>от 5 до 25</span></div><div class="range"><input type="range" id="batch" min="5" max="25" value="${s.batch}" aria-label="Слов за тренировку"><output id="batchOut">${s.batch}</output></div></div>
-    <div class="setrow"><div class="lbl"><b>Строгий учёт ошибок<button class="tip" type="button" aria-label="Пояснение" data-tip="Выключено: если вы ошиблись, но потом исправились, слово всё равно засчитывается как выученное на этом уровне. Включено: любая ошибка, даже исправленная, значит, что слово ещё не выучено. Новое слово останется в изучении, а при повторении вернётся на 1-й уровень и сразу будет доступно.">?</button></b><span>${s.strict?"любая ошибка, даже исправленная, не даёт засчитать слово выученным":"исправленная ошибка не мешает засчитать слово выученным"}</span></div><label class="switch"><input type="checkbox" id="strict" ${s.strict?"checked":""} aria-label="Строгий учёт ошибок"><span></span></label></div>
     <div class="setrow"><div class="lbl"><b>Сначала показывать</b><span>язык лицевой стороны карточки</span></div>${seg("first",[["en","English"],["ru","Русский"]])}</div>
   </div>
   <div class="panel">
@@ -1252,7 +1259,6 @@ function renderPrefs(){
   </div>`;
   bindAccountPanel(el);
   $("#tourBtn").onclick=()=>startTour(true);
-  $("#strict").onchange=e=>{ S().strict=e.target.checked; Store.saveSettings(); renderPrefs(); };
   const save=()=>{ Store.saveSettings(); };
   $("#batch").oninput=e=>{ s.batch=+e.target.value; $("#batchOut").textContent=s.batch; };
   $("#batch").onchange=save;
