@@ -34,6 +34,11 @@
           <input class="input" id="addInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Слово или фраза: to set off, справляться…" aria-label="Слово или фраза">
           <button class="btn primary" id="lookupBtn" type="submit">Найти</button>
         </form>
+        <div class="tagbox" id="addTagBox">
+          <label class="f"><span>Теги для новых слов <span class="muted">(необязательно)</span><button class="tip" type="button" aria-label="Пояснение" data-tip="Тег — это название подборки, например «работа» или «путешествие». Слово может иметь несколько тегов и участвовать в разных подборках. Если слово уже есть в колоде, ему просто добавится тег, а прогресс сохранится.">?</button></span>
+            <input class="input" id="addTags" autocomplete="off" placeholder="например: работа, поездка" maxlength="200"></label>
+          <div class="tagchips" id="addTagChips"></div>
+        </div>
         <div id="addResult" class="stack"></div>
         <details class="imp">
           <summary>Добавить списком</summary>
@@ -59,6 +64,7 @@
         <button data-f="known" aria-pressed="false">Выучено</button>
         <button data-f="due" aria-pressed="false">К повторению</button>
       </div>
+      <div class="filters tagfilters" id="tagFilters" hidden></div>
       <div id="wlist"></div>
     </section>
     <section id="v-stats" class="stack" hidden></section>

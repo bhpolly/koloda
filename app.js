@@ -18,15 +18,18 @@ function lsGet(k, d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(
 function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, modes:{choice:true, match:true, letters:true, typing:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", modes:{choice:true, match:true, letters:true, typing:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
 /* Любые данные извне (сервер, импорт) приводим к ожидаемой форме: только строки и числа нужной длины */
+const normTag = s => String(s??"").trim().replace(/^#+/,"").replace(/\s+/g," ").toLowerCase().slice(0,30);
+function cleanTags(a){ const out=[]; if(Array.isArray(a)) for(const x of a){ const t=normTag(x); if(t && !out.includes(t)) out.push(t); } return out.slice(0,10); }
+function parseTags(v){ return cleanTags(String(v||"").split(/[,;\n]/)); }
 function sanitizeCard(c){
   if(!c || typeof c!=="object" || !str(c.en) || !str(c.ru)) return null;
   const id = /^[\w-]{1,64}$/.test(c.id) ? c.id : uid();
-  return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300),
+  return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
     examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>({en:str(x?.en,300), ru:str(x?.ru,300)})).filter(x=>x.en),
     created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
@@ -36,7 +39,7 @@ function sanitizeSettings(s){
   if(["en","ru"].includes(s.first)) o.first=s.first;
   if(["off","en","both"].includes(s.audio)) o.audio=s.audio;
   if(+s.rate>=0.5 && +s.rate<=1.5) o.rate=+s.rate;
-  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone;
+  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30);
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -209,7 +212,7 @@ function setSync(){
   renderAcct();
 }
 /* ============ cards ============ */
-function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], created:Date.now(), box:0, due:0, reps:0, lapses:0, last:0, demo:!!f.demo }; }
+function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, last:0, demo:!!f.demo }; }
 const status = c => !c.box ? "new" : (c.box>=4 ? "known" : "learning");
 const isDue = c => c.box>0 && c.due <= Date.now();
 const allCards = () => [...Store.cards.values()];
@@ -534,7 +537,15 @@ async function saveDraft(){
     const b=$("#saveCard"); if(b){ b.disabled=true; b.textContent="Перевожу примеры…"; }
     d.examples = await FREE.translateExamples(d.examples.map(x=>({...x})));
   }
-  const c=newCard(d); Store.saveCard(c);
+  const tags=parseTags($("#addTags").value);
+  const same=allCards().find(x=>norm(x.en)===norm(d.en));
+  if(same){
+    const before=same.tags.length; same.tags=cleanTags([...same.tags,...tags]);
+    if(same.tags.length!==before) Store.saveCard(same);
+    addState=null; addInput.value=""; $("#langBadge").hidden=true; renderAdd(); renderList();
+    toast(same.tags.length!==before ? "Слово уже было в колоде: добавили теги" : "Это слово уже есть в колоде"); addInput.focus(); return;
+  }
+  const c=newCard({...d, tags}); Store.saveCard(c);
   addState=null; addInput.value=""; $("#langBadge").hidden=true; renderAdd(); renderList();
   toast("Карточка «"+c.en+"» добавлена"); addInput.focus();
 }
@@ -544,6 +555,7 @@ const SEP_RE = /\s+[—–−-]\s+|\s*[—–−=→:;\t]\s*/;
 function parseImport(text){
   const items=[], skipped=[], seen=new Set();
   const haveEn=new Set(allCards().map(c=>norm(c.en))), haveRu=new Set(allCards().map(c=>norm(c.ru)));
+  const tags=parseTags($("#addTags").value), byEn=new Map(allCards().map(c=>[norm(c.en),c]));
   for(const raw of String(text).split(/\r?\n/)){
     const line=raw.replace(/^\s*(?:[-–—•*·]|\d+[.)])\s+/,"").trim(); if(!line) continue;
     let a=line, b="";
@@ -564,7 +576,10 @@ function parseImport(text){
     else { en=a; need="ru"; }
     en=en.slice(0,200); ru=ru.slice(0,300);
     const key = en ? "e:"+norm(en) : "r:"+norm(ru);
-    if(seen.has(key) || (en ? haveEn.has(norm(en)) : haveRu.has(norm(ru)))){ skipped.push([line,"уже есть"]); continue; }
+    if(seen.has(key) || (en ? haveEn.has(norm(en)) : haveRu.has(norm(ru)))){
+      const ex = en ? byEn.get(norm(en)) : allCards().find(c=>norm(c.ru)===norm(ru));
+      if(ex && tags.length && !seen.has(key)){ const n0=ex.tags.length; ex.tags=cleanTags([...ex.tags,...tags]); if(ex.tags.length!==n0) Store.saveCard(ex); skipped.push([line,"уже есть, тег добавлен"]); seen.add(key); continue; }
+      skipped.push([line,"уже есть"]); continue; }
     seen.add(key); items.push({en, ru, need});
   }
   return {items, skipped};
@@ -610,7 +625,7 @@ $("#impBtn").onclick = async ()=>{
     const ready=[];
     items.forEach(x=>{ if(x.en && x.ru) ready.push(x); else failed.push([x.en||x.ru,"не удалось подобрать перевод"]); });
     // 2. сразу сохраняем карточки, чтобы ничего не потерялось
-    const made=ready.map(x=>newCard({en:x.en, ru:x.ru}));
+    const impTags=parseTags($("#addTags").value), made=ready.map(x=>newCard({en:x.en, ru:x.ru, tags:impTags}));
     made.forEach(c=>Store.saveCard(c));
     renderList();
     // 3. дополняем транскрипцией, звуком и примерами тем же способом, что и при одиночном добавлении
@@ -619,7 +634,7 @@ $("#impBtn").onclick = async ()=>{
     if($("#impEx").checked && made.length){ await enrichCards(made, sample, btn); stopped=impStop; }
     // 4. отчёт
     const allSkipped=lastImport.skipped;
-    const keep=allSkipped.filter(([,why])=>why!=="уже есть").map(([l])=>l);
+    const keep=allSkipped.filter(([,why])=>!/^уже есть/.test(why)).map(([l])=>l);
     $("#impText").value=keep.join("\n");
     renderImportReport(made.length, stopped);
     toast(`Добавлено ${made.length} ${plural(made.length,"слово","слова","слов")}`);
@@ -658,7 +673,7 @@ function renderImportReport(addedNow, stopped, retry=false){
     if(stopped) msg+=" Подбор остановлен.";
   }
   const missing=cs.filter(c=>!c.ipa || !c.examples?.length).length;
-  $("#impResult").innerHTML=`<div class="feedback ${addedNow?"ok":"no"} small">${esc(msg)}${missing && N?`<div class="row" style="margin-top:8px"><button class="btn" id="impRetry" type="button">Дополнить недостающее (${missing})</button></div>`:""}${reportSkipped(lastImport.skipped)}</div>`;
+  $("#impResult").innerHTML=`<div class="feedback ${addedNow?"ok":"no"} small">${esc(msg)}${missing && N?`<div class="row" style="margin-top:8px"><button class="btn" id="impRetry" type="button" data-tip="Повторит поиск только для слов без транскрипции или примеров. Уже найденное и ваши правки не изменятся.">Найти недостающее (${missing})</button></div><div class="muted" style="margin-top:6px">Для ${missing} ${plural(missing,"слова","слов","слов")} не нашлись транскрипция или примеры, например, когда такого слова нет в словаре или он не ответил. Кнопка попробует найти их ещё раз.</div>`:""}${reportSkipped(lastImport.skipped)}</div>`;
   const rb=$("#impRetry"); if(rb) rb.onclick=retryImport;
 }
 async function retryImport(){
@@ -671,29 +686,58 @@ async function retryImport(){
 }
 function reportSkipped(sk){
   if(!sk.length) return "";
-  return `<details style="margin-top:8px" open><summary class="small" style="cursor:pointer;font-weight:700">Не добавлено: ${sk.length}</summary><ul style="margin:6px 0 0;padding-left:18px">${sk.map(([l,why])=>`<li>${esc(l)} <span class="muted">— ${esc(why)}</span></li>`).join("")}</ul></details>`;
+  return `<details style="margin-top:8px" open><summary class="small" style="cursor:pointer;font-weight:700">Пропущено: ${sk.length}</summary><ul style="margin:6px 0 0;padding-left:18px">${sk.map(([l,why])=>`<li>${esc(l)} <span class="muted">— ${esc(why)}</span></li>`).join("")}</ul></details>`;
 }
 
 /* ============ words list ============ */
 let filter="all";
 $("#filters").onclick = e=>{ const b=e.target.closest("button"); if(!b) return; filter=b.dataset.f; $("#filters").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x===b)); renderList(); };
 $("#search").oninput = renderList;
+let tagFilter="";
+const tipAttr = t => `data-tip="${esc(t)}"`;
+const CHEV='<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
+const openEx=new Set();
+/* поле тегов с подсказками из уже существующих */
+function syncTagBox(box){
+  if(!box) return; const inp=box.querySelector("input"), cur=parseTags(inp.value), wrap=box.querySelector(".tagchips");
+  const all=tagCounts().map(([t])=>t).slice(0,16);
+  wrap.innerHTML=all.map(t=>`<button type="button" class="tagchip${cur.includes(t)?" on":""}" data-addtag="${esc(t)}" aria-pressed="${cur.includes(t)}">${esc(t)}</button>`).join("");
+}
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-addtag]"); if(!b) return; const box=b.closest(".tagbox"), inp=box.querySelector("input"), t=b.dataset.addtag; let cur=parseTags(inp.value); cur=cur.includes(t)?cur.filter(x=>x!==t):[...cur,t]; inp.value=cur.join(", "); syncTagBox(box); });
+document.addEventListener("input",e=>{ if(e.target.closest?.(".tagbox")) syncTagBox(e.target.closest(".tagbox")); });
+function tagCounts(){ const m=new Map(); allCards().forEach(c=>(c.tags||[]).forEach(t=>m.set(t,(m.get(t)||0)+1))); return [...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])); }
 function renderList(){
+  syncTagBox($("#addTagBox"));
+  const tags=tagCounts(); if(tagFilter && !tags.some(([t])=>t===tagFilter)) tagFilter="";
+  const tf=$("#tagFilters");
+  tf.hidden=!tags.length;
+  tf.innerHTML=tags.length?`<span class="label">Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Нажмите на тег, чтобы увидеть только слова из этой подборки. Нажмите ещё раз, чтобы снять фильтр. Учить подборку можно кнопкой ниже или на вкладке «Учить».">?</button></span>`+tags.map(([t,n])=>`<button type="button" class="tagchip${t===tagFilter?" on":""}" data-tagf="${esc(t)}" aria-pressed="${t===tagFilter}" ${tipAttr(t===tagFilter?"Снять фильтр по тегу":"Показать только слова с тегом «"+t+"»")}>${esc(t)} <small>${n}</small></button>`).join(""):"";
+  tf.querySelectorAll("[data-tagf]").forEach(b=>b.onclick=()=>{ tagFilter = tagFilter===b.dataset.tagf ? "" : b.dataset.tagf; renderList(); });
   const q = norm($("#search").value);
   let list = allCards().sort((a,b)=>b.created-a.created);
+  if(tagFilter) list=list.filter(c=>c.tags.includes(tagFilter));
   if(filter==="due") list=list.filter(isDue); else if(filter!=="all") list=list.filter(c=>status(c)===filter);
-  if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q));
+  if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||c.tags.some(t=>t.includes(q)));
   const el=$("#wlist");
   if(!Store.cards.size){ el.innerHTML=`<div class="panel empty muted">Колода пуста. Добавьте первое слово выше.</div>`; return; }
   if(!list.length){ el.innerHTML=`<div class="panel empty muted">Ничего не найдено.</div>`; return; }
-  el.innerHTML = `<div class="small muted" style="margin-bottom:6px">${list.length} ${plural(list.length,"карточка","карточки","карточек")}</div><div class="wlist">` + list.map(c=>`
-    <div class="witem" role="button" tabindex="0" data-edit="${c.id}">
+  const studyBar = tagFilter ? `<button class="btn" type="button" id="studyTag" ${tipAttr("Перейти на вкладку «Учить» с выбранной подборкой: будут учиться и повторяться только слова с этим тегом")}>Учить подборку «${esc(tagFilter)}»</button>` : "";
+  el.innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="small muted">${list.length} ${plural(list.length,"карточка","карточки","карточек")}</span>${studyBar}</div><div class="wlist">` + list.map(c=>{
+    const has=c.examples.length, open=has && openEx.has(c.id);
+    return `<div class="witem">
+    <div class="wrow" role="button" tabindex="0" data-edit="${c.id}">
       ${sayBtn(c.en)}
-      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">пример</span>':""}</b><span>${esc(c.ru)}</span></div>
+      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
+      <span class="exslot">${has?`<button type="button" class="exbtn${open?" open":""}" data-ex="${c.id}" aria-expanded="${open}" aria-label="Примеры использования" ${tipAttr(open?"Скрыть примеры":"Показать примеры использования ("+has+")")}>${CHEV}</button>`:""}</span>
       <span class="nextdue${isDue(c)?" due":""}">${dueLabel(c)}</span>
       ${boxesHtml(c)}
-    </div>`).join("") + `</div>`;
-  el.querySelectorAll("[data-edit]").forEach(r=>{ r.onclick=()=>openEdit(r.dataset.edit); r.onkeydown=e=>{ if(e.key==="Enter") openEdit(r.dataset.edit); }; });
+    </div>
+    ${open?`<ul class="ex-list wex">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`:""}
+    </div>`; }).join("") + `</div>`;
+  el.querySelectorAll("[data-edit]").forEach(r=>{ r.onclick=ev=>{ if(ev.target.closest("button")) return; openEdit(r.dataset.edit); }; r.onkeydown=e=>{ if(e.key==="Enter" && e.target===r) openEdit(r.dataset.edit); }; });
+  el.querySelectorAll("[data-ex]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); const id=b.dataset.ex; openEx.has(id)?openEx.delete(id):openEx.add(id); hideTip(); const y=scrollY; renderList(); scrollTo(0,y); });
+  el.querySelectorAll("[data-tagf2]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); hideTip(); tagFilter=b.dataset.tagf2; renderList(); });
+  const sb=$("#studyTag"); if(sb) sb.onclick=()=>{ S().deck=tagFilter; Store.saveSettings(); go("learn"); };
 }
 
 /* edit modal */
@@ -707,13 +751,14 @@ function openEdit(id){
     <label class="f">Русский<input class="input" id="e-ru" value="${esc(c.ru)}"></label>
     <label class="f">Транскрипция<input class="input" id="e-ipa" value="${esc(c.ipa)}"></label>
     <label class="f">Примеры: по одному в строке, «English | перевод»<textarea class="input" id="e-ex">${esc(c.examples.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n"))}</textarea></label>
+    <div class="tagbox" id="e-tagbox"><label class="f"><span>Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Через запятую. По тегу слова можно фильтровать в списке и учить отдельной подборкой.">?</button></span><input class="input" id="e-tags" autocomplete="off" value="${esc((c.tags||[]).join(", "))}" placeholder="например: работа, поездка" maxlength="200"></label><div class="tagchips"></div></div>
     ${SOURCE==="free"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
     <div class="small muted">Следующее повторение: ${dueLabel(c)} · повторений: ${c.reps}</div>
     <div class="row" id="e-actions" style="justify-content:space-between">
       <div class="row"><button class="btn danger" id="e-del">Удалить</button><button class="btn ghost" id="e-reset">Сбросить прогресс</button></div>
       <div class="row"><button class="btn" id="e-cancel">Отмена</button><button class="btn primary" id="e-save">Сохранить</button></div>
     </div>`);
-  $("#e-cancel").onclick=closeModal;
+  $("#e-cancel").onclick=closeModal; syncTagBox($("#e-tagbox"));
   let pendAudio="", pendPos="";
   if($("#e-fetch")) $("#e-fetch").onclick=async ()=>{
     const b=$("#e-fetch"), msg=$("#e-fetchMsg"); b.disabled=true; msg.textContent="Ищу…";
@@ -730,7 +775,7 @@ function openEdit(id){
   };
   $("#e-save").onclick=()=>{
     if(pendAudio && !c.audio) c.audio=pendAudio; if(pendPos && !c.pos) c.pos=pendPos;
-    c.en=$("#e-en").value.trim()||c.en; c.ru=$("#e-ru").value.trim()||c.ru; c.ipa=$("#e-ipa").value.trim();
+    c.en=$("#e-en").value.trim()||c.en; c.ru=$("#e-ru").value.trim()||c.ru; c.ipa=$("#e-ipa").value.trim(); c.tags=parseTags($("#e-tags").value);
     c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); return {en, ru:ru||""}; });
     Store.saveCard(c); closeModal(); renderAll(); toast("Сохранено");
   };
@@ -789,12 +834,14 @@ function renderLearn(){
     $("#demoBtn").onclick=()=>{ DEMO.forEach((d,i)=>{ const c=newCard({...d, demo:true}); c.created+=i; Store.saveCard(c); }); renderAll(); toast("Добавлено 8 карточек"); };
     bindGo(el); return;
   }
-  const fresh=cs.filter(c=>!c.box).length, due=cs.filter(isDue).length, n=Math.min(S().batch, fresh);
+  const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
+  const dc=deckCards(), fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, n=Math.min(S().batch, fresh);
+  const deckBar = tagsAll.length ? `<div class="deckbar"><span class="label">Подборка<button class="tip" type="button" aria-label="Пояснение" data-tip="Выберите тег, и тренировка возьмёт только слова с ним. Подборку можно сменить в любой момент. Прогресс у слова один на все подборки: выученное слово вернётся на повторение только в свой срок, даже если оно есть в другой подборке.">?</button></span><div class="filters" id="deckChips"><button type="button" data-deck="" aria-pressed="${!S().deck}" ${tipAttr("Учить все слова колоды")}>Все слова · ${cs.length}</button>${tagsAll.map(([t,k])=>`<button type="button" data-deck="${esc(t)}" aria-pressed="${S().deck===t}" ${tipAttr("Учить и повторять только слова с тегом «"+t+"»")}>${esc(t)} · ${k}</button>`).join("")}</div></div>` : "";
   const st=streakInfo(), today=Store.stats.days?.[dayKey()];
   const cta = due ? `<button class="btn primary" data-start="review">Повторить</button>${fresh?`<button class="btn ghost" data-start="learn">Учить новые</button>`:""}`
             : fresh ? `<button class="btn primary" data-start="learn">Начать обучение</button>`
             : `<button class="btn primary" data-go="words">Добавить слово</button>`;
-  el.innerHTML = heroHtml(cta) + `
+  el.innerHTML = heroHtml(cta) + deckBar + `
   <div class="sec-head"><h2>Сегодня в колоде</h2><button class="pill-link" data-go="stats">Прогресс</button></div>
   <div class="grid3">
     <div class="ftile lime">
@@ -825,6 +872,7 @@ function renderLearn(){
     ${cs.sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>`;
   el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startReview());
+  el.querySelectorAll("[data-deck]").forEach(b=>b.onclick=()=>{ hideTip(); S().deck=b.dataset.deck; Store.saveSettings(); renderLearn(); });
   el.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>openAuth(b.dataset.auth));
   bindGo(el);
 }
@@ -834,12 +882,13 @@ function bindGo(el){ el.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{
 const FILLER = [["house","дом"],["window","окно"],["to borrow","одалживать"],["weather","погода"],["cheap","дешёвый"],["to arrive","прибывать"],["neighbour","сосед"],["to forget","забывать"],["kitchen","кухня"],["busy","занятой"],["to explain","объяснять"],["journey","поездка"]].map(([en,ru])=>({en,ru}));
 let sess=null;
 function modesOn(){ const m=S().modes; return m; }
+function deckCards(){ const t=S().deck; return t ? allCards().filter(c=>c.tags.includes(t)) : allCards(); }
 function startLearn(){
-  const list=allCards().filter(c=>!c.box).sort((a,b)=>a.created-b.created).slice(0,S().batch);
+  const list=deckCards().filter(c=>!c.box).sort((a,b)=>a.created-b.created).slice(0,S().batch);
   if(list.length) buildSession("learn", list);
 }
 function startReview(){
-  const list=allCards().filter(isDue).sort((a,b)=>a.due-b.due).slice(0,Math.max(30,S().batch*2));
+  const list=deckCards().filter(isDue).sort((a,b)=>a.due-b.due).slice(0,Math.max(30,S().batch*2));
   if(list.length) buildSession("review", list);
 }
 function buildSession(kind, list){
@@ -1427,10 +1476,10 @@ function showTip(b){
   tipPop.style.top=top+"px"; b.setAttribute("aria-describedby","tipPop");
 }
 function hideTip(){ tipPop.hidden=true; tipBtn?.removeAttribute("aria-describedby"); tipBtn=null; }
-document.addEventListener("mouseover",e=>{ const b=e.target.closest?.(".tip"); if(b) showTip(b); });
-document.addEventListener("mouseout",e=>{ if(e.target.closest?.(".tip") && !e.relatedTarget?.closest?.(".tip")) hideTip(); });
-document.addEventListener("focusin",e=>{ const b=e.target.closest?.(".tip"); if(b) showTip(b); });
-document.addEventListener("focusout",e=>{ if(e.target.closest?.(".tip")) hideTip(); });
+document.addEventListener("mouseover",e=>{ const b=e.target.closest?.("[data-tip]"); if(b && b!==tipBtn) showTip(b); });
+document.addEventListener("mouseout",e=>{ const b=e.target.closest?.("[data-tip]"); if(b && !e.relatedTarget?.closest?.("[data-tip]")) hideTip(); });
+document.addEventListener("focusin",e=>{ const b=e.target.closest?.("[data-tip]"); if(b) showTip(b); });
+document.addEventListener("focusout",e=>{ if(e.target.closest?.("[data-tip]")) hideTip(); });
 document.addEventListener("click",e=>{ const b=e.target.closest?.(".tip"); if(b){ e.preventDefault(); e.stopPropagation(); showTip(b); } else if(!tipPop.hidden) hideTip(); }, true);
 window.addEventListener("scroll",hideTip,{passive:true});
 document.addEventListener("keydown",e=>{ if(e.key==="Escape" && !tipPop.hidden) hideTip(); });
