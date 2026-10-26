@@ -18,7 +18,7 @@ function lsGet(k, d){ try{ const v=localStorage.getItem(k); return v?JSON.parse(
 function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", modes:{choice:true, match:true, letters:true, typing:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", strict:false, modes:{choice:true, match:true, letters:true, typing:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -39,7 +39,7 @@ function sanitizeSettings(s){
   if(["en","ru"].includes(s.first)) o.first=s.first;
   if(["off","en","both"].includes(s.audio)) o.audio=s.audio;
   if(+s.rate>=0.5 && +s.rate<=1.5) o.rate=+s.rate;
-  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30);
+  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30); o.strict=!!s.strict;
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -754,6 +754,7 @@ function openEdit(id){
     <div class="tagbox" id="e-tagbox"><label class="f"><span>Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Через запятую. По тегу слова можно фильтровать в списке и учить отдельной подборкой.">?</button></span><input class="input" id="e-tags" autocomplete="off" value="${esc((c.tags||[]).join(", "))}" placeholder="например: работа, поездка" maxlength="200"></label><div class="tagchips"></div></div>
     ${SOURCE==="free"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
     <div class="small muted">Следующее повторение: ${dueLabel(c)} · повторений: ${c.reps}</div>
+    <div class="row">${c.box>0?`<button class="btn" id="e-prac" type="button" data-tip="Пройти упражнения по этому слову прямо сейчас. Уровень и срок повтора не изменятся.">Потренировать сейчас</button>`:""}${c.box<7?`<button class="btn" id="e-master" type="button" data-tip="Поставит прогресс слова на 100%: следующий повтор через 180 дней. Сбросить прогресс можно в любой момент.">Отметить выученным</button>`:`<span class="chip">Прогресс 100%</span>`}</div>
     <div class="row" id="e-actions" style="justify-content:space-between">
       <div class="row"><button class="btn danger" id="e-del">Удалить</button><button class="btn ghost" id="e-reset">Сбросить прогресс</button></div>
       <div class="row"><button class="btn" id="e-cancel">Отмена</button><button class="btn primary" id="e-save">Сохранить</button></div>
@@ -779,6 +780,8 @@ function openEdit(id){
     c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); return {en, ru:ru||""}; });
     Store.saveCard(c); closeModal(); renderAll(); toast("Сохранено");
   };
+  if($("#e-master")) $("#e-master").onclick=()=>{ masterCard(c); closeModal(); renderAll(); toast("Слово выучено: прогресс 100%"); };
+  if($("#e-prac")) $("#e-prac").onclick=()=>{ closeModal(); buildSession("practice",[c]); };
   $("#e-reset").onclick=()=>{ c.box=0; c.due=0; c.reps=0; Store.saveCard(c); closeModal(); renderAll(); toast("Слово снова новое"); };
   $("#e-del").onclick=()=>{
     $("#e-actions").innerHTML=`<span class="small">Удалить «${esc(c.en)}» насовсем?</span><div class="row"><button class="btn" id="e-no">Нет</button><button class="btn primary" id="e-yes" style="background:var(--bad);border-color:var(--bad)">Удалить</button></div>`;
@@ -835,7 +838,7 @@ function renderLearn(){
     bindGo(el); return;
   }
   const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
-  const dc=deckCards(), fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, n=Math.min(S().batch, fresh);
+  const dc=deckCards(), ahead=aheadCards().length, fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, n=Math.min(S().batch, fresh);
   const deckBar = tagsAll.length ? `<div class="deckbar"><span class="label">Подборка<button class="tip" type="button" aria-label="Пояснение" data-tip="Выберите тег, и тренировка возьмёт только слова с ним. Подборку можно сменить в любой момент. Прогресс у слова один на все подборки: выученное слово вернётся на повторение только в свой срок, даже если оно есть в другой подборке.">?</button></span><div class="filters" id="deckChips"><button type="button" data-deck="" aria-pressed="${!S().deck}" ${tipAttr("Учить все слова колоды")}>Все слова · ${cs.length}</button>${tagsAll.map(([t,k])=>`<button type="button" data-deck="${esc(t)}" aria-pressed="${S().deck===t}" ${tipAttr("Учить и повторять только слова с тегом «"+t+"»")}>${esc(t)} · ${k}</button>`).join("")}</div></div>` : "";
   const st=streakInfo(), today=Store.stats.days?.[dayKey()];
   const cta = due ? `<button class="btn primary" data-start="review">Повторить</button>${fresh?`<button class="btn ghost" data-start="learn">Учить новые</button>`:""}`
@@ -866,12 +869,13 @@ function renderLearn(){
       <button class="btn" data-go="words">+ Новое слово</button>
     </div>
   </div>
+  ${ahead?`<div class="panel row" style="justify-content:space-between;gap:12px"><div><b>Потренироваться вне графика</b><div class="small muted">Слова, которые вы уже учили и срок повтора ещё не пришёл (${ahead}). Можно тренировать сколько угодно, уровень слов при этом не меняется.</div></div><button class="btn" data-start="practice" ${tipAttr("Знакомство и упражнения, как в обычном обучении, но без влияния на прогресс. Слово вернётся на повторение, когда придёт срок.")}>Потренировать ${Math.min(S().batch,ahead)}</button></div>`:""}
   ${AUTH.enabled && Store.mode==="local" ? `<div class="ftile nudge"><div><h3>Сохраните слова в аккаунте</h3><p>Сейчас колода живёт только в этом браузере. С аккаунтом слова не потеряются и будут на любом устройстве.</p></div><div class="row"><button class="btn primary" data-auth="signup">Регистрация</button><button class="btn" data-auth="signin">Вход</button></div></div>` : ""}
   <div class="sec-head"><h2>Недавно добавленные</h2><button class="pill-link" data-go="words">Все слова</button></div>
   <div class="grid2">
     ${cs.sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>`;
-  el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startReview());
+  el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : b.dataset.start==="practice" ? startPractice() : startReview());
   el.querySelectorAll("[data-deck]").forEach(b=>b.onclick=()=>{ hideTip(); S().deck=b.dataset.deck; Store.saveSettings(); renderLearn(); });
   el.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>openAuth(b.dataset.auth));
   bindGo(el);
@@ -887,13 +891,15 @@ function startLearn(){
   const list=deckCards().filter(c=>!c.box).sort((a,b)=>a.created-b.created).slice(0,S().batch);
   if(list.length) buildSession("learn", list);
 }
+function aheadCards(){ return deckCards().filter(c=>c.box>0 && !isDue(c)).sort((a,b)=>(a.last||0)-(b.last||0)); }
+function startPractice(){ const list=aheadCards().slice(0,S().batch); if(list.length) buildSession("practice", list); }
 function startReview(){
   const list=deckCards().filter(isDue).sort((a,b)=>a.due-b.due).slice(0,Math.max(30,S().batch*2));
   if(list.length) buildSession("review", list);
 }
 function buildSession(kind, list){
   const m=modesOn(), ids=list.map(c=>c.id), rounds=[];
-  if(kind==="learn"){
+  if(kind!=="review"){
     rounds.push({type:"intro", queue:ids.slice()});
     if(m.choice) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
     if(m.match && ids.length>=2){ const sh=shuffle(ids), ch=[]; for(let i=0;i<sh.length;i+=5) ch.push(sh.slice(i,i+5)); if(ch.length>1 && ch[ch.length-1].length<2){ ch[ch.length-2].push(...ch.pop()); } rounds.push({type:"match", queue:ch}); }
@@ -1102,30 +1108,44 @@ function closeSess(){ try{ speechSynthesis.cancel(); }catch{} $("#qc")?.remove()
 
 function finish(){
   sess.finished=true; updateBar();
-  const now=Date.now(), rows=[];
+  const now=Date.now(), rows=[], strict=!!S().strict, practice=sess.kind==="practice";
   for(const id of sess.ids){
     const c=cardOf(id); if(!c) continue;
-    const m=sess.mistakes[id];
-    if(sess.skipped.has(id)){ c.box=4; }
-    else if(sess.kind==="learn"){ c.box = m===0 ? 2 : 1; }
-    else { if(m===0) c.box=Math.min(7,c.box+1); else if(m>=2){ c.box=1; c.lapses++; } }
-    c.due = startOfDay(now) + INTERVALS[c.box]*DAY; c.reps++; c.last=now;
+    const m=sess.mistakes[id], skip=!practice && sess.skipped.has(id);
+    let note="";
+    if(practice){ rows.push({c,m,skip:false}); continue; }   // тренировка вне графика: прогресс не трогаем
+    let backNow=false;
+    if(skip){ c.box=4; }
+    else if(sess.kind==="learn"){
+      if(strict && m>0){ c.box=0; c.due=0; note="останется в изучении"; }
+      else c.box = m===0 ? 2 : 1;
+    } else {
+      if(m===0) c.box=Math.min(7,c.box+1);
+      else if(strict || m>=2){ c.box=1; c.lapses++; backNow=strict; }
+    }
+    if(c.box>0) c.due = backNow ? now : startOfDay(now) + INTERVALS[c.box]*DAY;
+    c.reps++; c.last=now;
     Store.saveCard(c);
-    rows.push({c, m, skip:sess.skipped.has(id)});
+    rows.push({c, m, skip, note});
   }
   const k=dayKey(); const d=Store.stats.days[k] ||= {n:0,learned:0,reviewed:0,right:0,total:0};
-  d.n+=rows.length; d[sess.kind==="learn"?"learned":"reviewed"]+=rows.length; d.right+=sess.right; d.total+=sess.answers;
+  d.n+=rows.length; if(!practice) d[sess.kind==="learn"?"learned":"reviewed"]+=rows.length; d.right+=sess.right; d.total+=sess.answers;
   Store.saveStats();
   const acc = sess.answers ? Math.round(sess.right/sess.answers*100) : 100;
   const dueCount=allCards().filter(isDue).length, fresh=allCards().filter(c=>!c.box).length;
-  body().innerHTML = `<div class="flash" style="gap:6px"><div class="label">${sess.kind==="learn"?"Обучение завершено":"Повторение завершено"}</div>
-    <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div></div>
-    <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.m?"no":"ok"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${dueLabel(r.c)}</span></div>`).join("")}</div>
-    <div class="sess-foot">${dueCount?`<button class="btn mark" id="more2">Повторить (${dueCount})</button>`:""}${fresh?`<button class="btn primary" id="more">Ещё ${Math.min(S().batch,fresh)} новых</button>`:""}<button class="btn" id="fin">Готово</button></div>`;
+  const clean=rows.filter(r=>!r.m).length;
+  const title = practice?"Тренировка завершена":sess.kind==="learn"?"Обучение завершено":"Повторение завершено";
+  body().innerHTML = `<div class="flash" style="gap:6px"><div class="label">${title}</div>
+    <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div>${practice?`<div class="small muted">Прогресс слов не изменился: они вернутся на повторение в свой срок.</div>`:""}</div>
+    <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.m?"no":"ok"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${r.note||dueLabel(r.c)}</span></div>`).join("")}</div>
+    <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 180 дней).">Считать выученными (${clean})</button>`:""}${dueCount?`<button class="btn mark" id="more2">Повторить (${dueCount})</button>`:""}${fresh?`<button class="btn primary" id="more">Ещё ${Math.min(S().batch,fresh)} новых</button>`:""}<button class="btn" id="fin">Готово</button></div>`;
   $("#fin").onclick=closeSess;
+  if($("#master")) $("#master").onclick=()=>{ rows.filter(r=>!r.m).forEach(r=>masterCard(r.c)); toast("Слова отмечены выученными"); $("#master").remove(); };
   if($("#more")) $("#more").onclick=()=>{ sess=null; startLearn(); };
   if($("#more2")) $("#more2").onclick=()=>{ sess=null; startReview(); };
 }
+/* вручную сделать слово выученным: прогресс 100% */
+function masterCard(c){ const now=Date.now(); c.box=7; c.due=startOfDay(now)+INTERVALS[7]*DAY; c.reps++; c.last=now; Store.saveCard(c); }
 
 /* ============ progress ============ */
 function renderStats(){
@@ -1201,6 +1221,7 @@ function renderPrefs(){
   <div class="panel">
     <div class="label" style="margin-bottom:4px">Обучение</div>
     <div class="setrow"><div class="lbl"><b>Слов за одну тренировку</b><span>от 5 до 25</span></div><div class="range"><input type="range" id="batch" min="5" max="25" value="${s.batch}" aria-label="Слов за тренировку"><output id="batchOut">${s.batch}</output></div></div>
+    <div class="setrow"><div class="lbl"><b>Строгий учёт ошибок<button class="tip" type="button" aria-label="Пояснение" data-tip="Выключено: если вы ошиблись, но потом исправились, слово всё равно засчитывается как выученное на этом уровне. Включено: любая ошибка, даже исправленная, значит, что слово ещё не выучено. Новое слово останется в изучении, а при повторении вернётся на 1-й уровень и сразу будет доступно.">?</button></b><span>${s.strict?"любая ошибка, даже исправленная, не даёт засчитать слово выученным":"исправленная ошибка не мешает засчитать слово выученным"}</span></div><label class="switch"><input type="checkbox" id="strict" ${s.strict?"checked":""} aria-label="Строгий учёт ошибок"><span></span></label></div>
     <div class="setrow"><div class="lbl"><b>Сначала показывать</b><span>язык лицевой стороны карточки</span></div>${seg("first",[["en","English"],["ru","Русский"]])}</div>
   </div>
   <div class="panel">
@@ -1231,6 +1252,7 @@ function renderPrefs(){
   </div>`;
   bindAccountPanel(el);
   $("#tourBtn").onclick=()=>startTour(true);
+  $("#strict").onchange=e=>{ S().strict=e.target.checked; Store.saveSettings(); renderPrefs(); };
   const save=()=>{ Store.saveSettings(); };
   $("#batch").oninput=e=>{ s.batch=+e.target.value; $("#batchOut").textContent=s.batch; };
   $("#batch").onchange=save;
