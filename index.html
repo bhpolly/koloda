@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src https://api.dictionaryapi.dev; connect-src https://dftaazmoslqbnjjjutqr.supabase.co https://api.mymemory.translated.net https://api.dictionaryapi.dev https://tatoeba.org; manifest-src 'self'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; media-src https://api.dictionaryapi.dev; connect-src 'self' https://dftaazmoslqbnjjjutqr.supabase.co https://api.mymemory.translated.net https://api.dictionaryapi.dev https://tatoeba.org https://en.wiktionary.org; manifest-src 'self'; base-uri 'none'; form-action 'self'; upgrade-insecure-requests">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Карточки английских слов: перевод, примеры, произношение, тренировки и интервальные повторения.">
@@ -49,24 +49,33 @@
               <label class="row small muted" style="gap:8px"><span class="switch"><input type="checkbox" id="impEx" checked><span></span></span>подобрать примеры и транскрипцию</label>
               <button class="btn" id="impBtn" type="button">Импортировать</button>
             </div>
+            <div id="impEst" class="small muted" aria-live="polite"></div>
             <div id="impResult" role="status"></div>
           </div>
         </details>
       </div>
+      <div id="fillBox" class="stack"></div>
       <div class="sec-head"><h2>Моя колода</h2><button class="pill-link" type="button" id="toLearn">Учить</button></div>
-      <div class="row" style="justify-content:space-between">
-        <input class="input" id="search" placeholder="Поиск по колоде" style="flex:1;min-width:180px" aria-label="Поиск">
+      <div class="row toolbar">
+        <input class="input" id="search" placeholder="Поиск по слову, переводу или тегу" style="flex:1;min-width:180px" aria-label="Поиск">
+        <select class="input sel" id="sortSel" aria-label="Сортировка"></select>
+      </div>
+      <div class="row tools">
+        <button class="btn" type="button" id="selBtn" data-tip="Режим выбора: отметьте несколько слов, чтобы разом добавить или убрать тег, либо удалить их.">Выбрать</button>
+        <button class="btn" type="button" id="dupBtn" data-tip="Найдёт слова с одинаковым английским написанием и предложит объединить их в одну карточку.">Найти дубли</button>
+        <button class="btn" type="button" id="tagMgr" data-tip="Переименование, объединение и удаление тегов.">Управление тегами</button>
       </div>
       <div class="filters" id="filters">
         <button data-f="all" aria-pressed="true">Все</button>
         <button data-f="new" aria-pressed="false">Новые</button>
-        <button data-f="learning" aria-pressed="false">Учу</button>
-        <button data-f="known" aria-pressed="false">Выучено</button>
+        <button data-f="studied" aria-pressed="false" data-tip="Слова, которые вы уже прошли в обучении хотя бы раз">Изучено</button>
+        <button data-f="known" aria-pressed="false" data-tip="Слова с 4-го уровня и выше: память надолго">Надолго</button>
         <button data-f="due" aria-pressed="false">К повторению</button>
         <button data-f="hard" aria-pressed="false" data-tip="Слова, в которых вы чаще ошибались">Сложные</button>
       </div>
       <div class="filters tagfilters" id="tagFilters" hidden></div>
       <div id="wlist"></div>
+      <div class="selbar" id="selBar" hidden></div>
     </section>
     <section id="v-stats" class="stack" hidden></section>
     <section id="v-prefs" class="stack" hidden></section>
