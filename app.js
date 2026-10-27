@@ -32,7 +32,7 @@ function showStoreWarn(){
 try{ localStorage.setItem("koloda_probe","1"); localStorage.removeItem("koloda_probe"); }catch{ storageBad=true; }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", modes:{choice:true, match:true, letters:true, typing:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", goal:10, revCap:40, level:"B1", modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -44,7 +44,7 @@ function sanitizeCard(c){
   if(!c || typeof c!=="object" || !str(c.en) || !str(c.ru)) return null;
   const id = /^[\w-]{1,64}$/.test(c.id) ? c.id : uid();
   return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
-    examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>({en:str(x?.en,300), ru:str(x?.ru,300)})).filter(x=>x.en),
+    examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>{ const o={en:str(x?.en,300), ru:str(x?.ru,300)}; if(x?.src) o.src=str(x.src,8); if(x?.mt) o.mt=true; if(x?.pin) o.pin=true; return o; }).filter(x=>x.en),
     created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
 function sanitizeSettings(s){
@@ -53,12 +53,15 @@ function sanitizeSettings(s){
   if(["en","ru"].includes(s.first)) o.first=s.first;
   if(["off","en","both"].includes(s.audio)) o.audio=s.audio;
   if(+s.rate>=0.5 && +s.rate<=1.5) o.rate=+s.rate;
+  if([3,5,10,15,20,30,50].includes(+s.goal)) o.goal=+s.goal;
+  if([15,25,40,60,100].includes(+s.revCap)) o.revCap=+s.revCap;
+  if(["A2","B1","B2","C1"].includes(s.level)) o.level=s.level;
   o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30);
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
 function sanitizeStats(s){
-  const days={}; const d=s?.days; if(d&&typeof d==="object") for(const [k,v] of Object.entries(d)) if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&v&&typeof v==="object") days[k]={n:numv(v.n),learned:numv(v.learned),reviewed:numv(v.reviewed),right:numv(v.right),total:numv(v.total)};
+  const days={}; const d=s?.days; if(d&&typeof d==="object") for(const [k,v] of Object.entries(d)) if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&v&&typeof v==="object") { days[k]={n:numv(v.n),learned:numv(v.learned),reviewed:numv(v.reviewed),rf:numv(v.rf),right:numv(v.right),total:numv(v.total)}; if(v.closed!==undefined) days[k].closed=!!v.closed; }
   return {days};
 }
 const Store = {
@@ -357,7 +360,7 @@ const FREE = {
     return {state:"ok", ipa, audio, meanings, examples, pos: meanings.length===1 ? meanings[0].pos : (meanings[0]?.pos||"")};
   },
   async translateExamples(exs){
-    for(const x of exs){ if(x.ru) continue; try{ x.ru = (await this.translate(x.en,"en","ru")).responseData?.translatedText || ""; }catch(e){ if(e.code==="quota") break; } }
+    for(const x of exs){ if(x.ru) continue; try{ x.ru = (await this.translate(x.en,"en","ru")).responseData?.translatedText || ""; if(x.ru) x.mt=true; }catch(e){ if(e.code==="quota") break; } }
     return exs;
   },
 };
@@ -396,6 +399,54 @@ const phraseHit=(sentence, vars)=>{ const s=" "+sentence.toLowerCase().replace(/
 const stripHtml=s=>String(s||"").replace(/<[^>]*>/g,"").replace(/&nbsp;/g," ").replace(/&quot;/g,'"').replace(/&#0?39;/g,"'").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&amp;/g,"&").replace(/\s+/g," ").trim();
 const goodSentence=en=>en.length>=12 && en.length<=120 && /[a-z]/i.test(en) && !/[<>{}\[\]|]/.test(en);
 
+/* ===== уровень примеров: частотный список (3000 самых частых слов, wordfreq, CC BY-SA) + слова из колоды ===== */
+const FREQ_WORDS = "the to and of a in i is for that you it on with this was be as are have at he not by but from my or we an your all so his they me if one can will just like about up out what has when more do no were who had their there her which time get been would she new people how some also them now other its our than good only after first him into know see two make over think any then could back these us want because go well said way most much very where even should may here need really did right work year years being day too going before off why made still take got many never those life say world down great through last while best such love man home long look something use same used both every am come part state three around between always better find help high little old since another does own things under during game thing give house place school again next each mr without against end found must show big feel sure team ever family keep might please put money free second someone away left number city days lot name night play until company doing few let real called different having set thought done however getting god government group looking public top women business care start system times week already anything case nothing person today change enough everything full live making point read told yet bad four hard mean once support tell including music power seen states stop water based believe call head men national small took white came far job side though try went yes actually american later less line order party run says service country open season shit thank children everyone general trying united using area black following law makes together war whole car face five kind maybe per president story working course games health hope important least means news within able book early friends information local oh post thanks video young ago others social talk court fact given guys half hand level mind often single become body coming control death food guy hours office pay problem south true almost fuck history known large lost research room several started taking university win wrong along anyone else girl john matter pretty remember air bit friend hit needs nice playing probably saying understand yeah york class close comes idea international looks past possible wanted cause due happy human members months move question series wait woman ask community data late leave north saw special watch either fucking future light low million morning police short stay taken age buy deal rather reason red report soon third turn whether among check development form further heart minutes myself services yourself act although asked child fire fun living major media phone players art behind building easy gonna market near non plan political quite six talking west works according available education final former front kids list ready sometimes son street bring college current example experience heard london meet program type baby chance father march process song study word across action clear gave gets himself month outside self students words board cost cut dr field held instead main moment mother road seems thinking town wants de department energy fight fine force hear issue played points price re rest results running shows space summer term wife america beautiful date goes killed land miss project sex shot site strong account co especially eyes include june parents period position record similar total above club common died film happened knew lead likely military perfect personal security share st tv won april center county couple dead english happen hold industry inside issues online player private problems return rights sense star test view weeks break british companies event higher hour member middle needed present result sorry takes training wish answer boy design finally girls gold gone guess interest july king learn policy society added al alone average bank brought certain church east hands hot longer medical movie original park performance press received role sent themselves tried worked worth areas became bill books cool director exactly giving ground meeting provide questions relationship september sound source usually value evidence follow lives official ok production rate reading round save stand stuff tax whatever amount blue countries david drive eat fall fast federal feeling felt green league management match model picture size step trust central changes england forward groups hey key mom page paid range review science trade uk upon various attention brother cannot character chief cup football hate james led looked lower natural october property quality send style vote amazing august blood china complete dog economic hell involved itself language lord november oil related serious stage terms title add article attack born damn decided decision enjoy entire french january kill met perhaps poor release situation technology turned website written choice code considered continue council cover currently door election european events financial foreign hair increase legal lose michael pick race seem seven sign simple simply staff super union walk washington bed began built career changed crazy daily daughter december die difficult figure hospital knows loss modern ones paper parts popular published safe starting systems version voice whose writing army australia earth forget goal huge internet listen okay practice rules sea sir success towards waiting ways access base below created deep followed la lol mark missing offer pass professional released risk schools sleep table ten truth ball box build card cases dark district europe george india mine minister note percent piece products recent seeing straight visit wall wanna wrote allowed boys culture etc fans february gives growth included married officer pain paul places respect response river rock shall speak specific standard tonight write album century charge cold create effect eight except eye funny ii limited moving network peace provided recently required sales spent store student tomorrow track via watching weight addition ahead allow anti association beat brown capital chinese committee conference difference double expect gas island moved normal plans population potential pressure radio russian station text treatment western ass beginning california campaign certainly completely content credit cross described despite female focus hi husband ice individual interesting join kept leading loved message miles nearly particular previous quickly region reported section sort speed travel consider contact drop fair feet jesus kid link positive sale throughout tour welcome absolutely additional beyond conditions earlier extra forces immediately jobs leaving minute nature numbers quick sell significant studies unless winning agree canada clean computer construction episode favorite income justice levels manager movement photo posted safety san scene sold sounds spend statement sun teams ability announced asking calling coach collection continued costs definitely designed expected friday gun happens heavy includes knowledge particularly search subject train wide wow author centre claim dad developed fear fit generally german global goals gotta hotel interested judge lady leader letter lines material named nobody opportunity plus pre product regular secretary sister stories unit workers annual anymore bar battle brain contract degree families features finished floor france growing hurt image insurance majority meant opening opinion physical pro reach rule seriously sports stupid successful active administration approach australian biggest cancer civil dance defense direction independent master none reasons russia ship stock trump weekend wonder worst africa awesome band beach cash clearly commercial compared effort ended fan fighting imagine impact lack latest learning multiple older operation organization passed pictures protect secret senior spring sunday telling wear activities address analysis anyway bought calls choose christmas color commission competition details direct dream easily finish grand increased indian literally luck marriage names necessary patients resources rich skin speaking supposed sweet thus touch yesterday caught closed congress damage directly disease doctor doubt drink driving established facebook feels fish gay germany glad greater grow largest machine notice overall planning professor programs records reports shown sit trip associated basic captain carry cars crime effective effects explain fully highly holding japan laws male mrs parties plant reality smith spot texas winter worse advice agreement award block broken caused challenge characters christian comment equipment eventually helped holy killing lived lots nation otherwise peter prices primary purpose rates responsible shop showing sick teacher theory uses william agency avoid camera catch cell coast comments drug economy environment executive foot hall mass meaning mission nine officers operations politics pop produced ran saturday status therefore trial truly weather activity app application claims coffee complex condition division evening flight freedom google heat highest interview library located location murder obama offered putting queen seconds showed sitting standing stars walking accept actual appear attempt broke channel distance eating exchange fat fell finding glass learned losing mobile northern opened placed powerful prior protection reached receive religious ride robert royal screen serve signed slow species speech traffic tree types vs wearing whom wonderful agreed airport animals appears begin benefits bottom cities demand engine everybody famous ideas investment keeping lie notes partner plays raised runs sad solution songs sources southern square stopped structure thomas traditional twice wind worry americans appeared becomes brand bus cent chicago count covered critical digital forced fourth fresh lake mental mentioned missed mostly mouth owner photos previously realize remain scale score separate smart starts surface throw tom totally twitter views wedding acting actions african arms benefit budget click estate failed faith fashion feature fund generation hearing hill jack larger louis metal mid paris profile pull push returned rose seat seemed sexual target understanding village agent animal apply authority basis becoming chris draw dude employees enter ex follows foundation gain http individuals japanese leaders memory prime projects ring rise selling served silver soul spread supply waste weird adult apparently artist chairman edition engineering grade happening healthy institute method mike monday nations obviously option prison provides remains senate smaller somebody stone strength users wild window winner arrived bag bet camp cast christ continues correct dangerous ed extremely firm greatest handle improve indeed leaves movies negative prevent removed richard spirit television till trouble usa videos advantage apart aware cat customers decide dinner dollars eastern fifth function gift helping herself impossible influence items joe los marketing mary materials nor produce progress proud require shooting shut standards tells thinks van wood background birth bridge carried charles classes completed concept copy dear dogs drugs efforts garden host housing inc israel journal labor leadership length lucky neither onto patient possibly prove rare setting skills software thousands tough units ad alive apple balance birthday bitch boss cards changing connection dress easier fellow florida horse knowing liked magic managed map net owned request stick turns vehicle volume wake aid beauty believed billion busy buying cells concerned conversation corner criminal cultural develop driver ends existing farm file fix fly frank guide images investigation mexico operating paying presented raise responsibility roll slightly suggest surprise technical thoughts treat unique variety violence weapons yours youth appreciate bigger breaking discovered dont dry edge evil excited forever funds helps henry injury iron lovely mad magazine martin models offers ordered parliament prepared reference religion sites somewhere stated strategy teachers web wine accounts angeles arm audience bay blog closer core democratic description dropped excellent exist figures forms guard honest issued joined jones lee lies likes medicine mention mountain nuclear orders port presence reaction reduce shoot sides solid spanish sport steps stress taste tea victory afternoon assistant britain citizens classic clothes decisions electric emergency entered entirely facts failure festival flat fuel harry hello houses ill initial introduced johnson kick links mail massive matters pair picked pieces plane plenty prince proper providing quarter regional scott session shape sky teaching toward transfer upper useful valley watched willing windows zone accident advanced alternative anywhere articles awards bear boat bringing capacity cheap climate communities discussion drinking duty fantastic feelings flying governor hundred industrial joint mix museum options path plants policies promise proposed purchase rain remove signs spending steel steve supporting terrible tired treated turning vice warm afraid arts beer border canadian command crew crowd dating dick elements enemy ensure environmental filled fixed forest intelligence intended labour limit moon ocean powers profit proof republican soldiers suit wins appearance asian attorney banks behavior ben bodies brothers buildings chair creating debt domestic expensive grew historical homes honestly honor im jump launch listed minimum native noted originally planned pm ray sets suddenly supreme survey tech trees update user writer yellow younger ancient attacks charges combined communication connected contains download email ending exercise express flow formed girlfriend hero illegal increasing joke loan methods officials performed planet relationships restaurant scotland selected shared shopping soft stuck sugar suggested supported surprised taught transport accepted adding affairs allows appeal applied appropriate artists boston ca confirmed device drama entry era factor feed golden grant grown heads hoping keeps lawyer legs lying measures mistake ms muslim organizations platform pool pulled regarding relations requires route saved schedule scientific shoes smoke squad teach testing tests values walked williams ya abuse angry businesses candidate comfortable concern developing discuss elections emotional et everywhere facilities falling fox guns hole holiday interests internal ireland italian italy jersey laugh leg letters liberal listening ll loves lunch max milk pack payment perform recorded relatively sector sharing snow storm streets strike studio sub weak youtube actor advance apartment asia chain chapter committed confidence cook cute equal fake finance focused hits identity journey kitchen korea leads maintain measure mm numerous owners posts properties quiet revealed specifically split task taxes taylor twenty urban acts affected aircraft applications approved approximately argument arrested claimed conflict considering corporate debate determined distribution documents escape extended factors faster fault fill films flowers friendly ladies lay lights millions mixed phase properly pure reduced requirements residents revenue sam sat secure smile strange talent temperature thousand tony troops truck votes ah authorities basically besides bird blame bob bowl causes chicken collected context coverage determine display dying elected examples experienced falls false fired forgot funding identified iii incredible inspired launched ma meat ministry mode neck noticed novel obvious passing positions remaining scored shirt shots slowly stadium stores surgery trading tuesday vision whenever worried zero alex allowing begins champion charged cream crisis daniel delivered editor estimated eu giant iran jail jim kingdom literature mayor minor moments opposite orange ourselves pages remained selection serving signal stream struggle suicide talked theme thursday tiny typically un unfortunately usual vehicles virginia voted voting walls wave alcohol assembly breakfast bright brings capable carrying chosen combination conservative customer cutting desire destroyed draft drunk essential fail familiar finds granted guilty humans hundreds id improved jewish largely laughing markets medium ohio opportunities papers perfectly recommend referred relevant seek sending solo spoke stands talks ticket unable upset wing answers birds bomb creative cycle dealing directed don educational entertainment extreme facility fields goods hang holds info mainly maximum newspaper offering painting republic reserve returns row salt scared scottish shares statistics switch territory threat tickets wales adults affect appointed armed aside assistance bell blow bond boyfriend careful circumstances communications concerns controlled corporation cry danger deals delivery deserve devices dollar dreams empty enjoyed explained faces folks fucked gender instance kim kinda matches mile motion moves nick pacific prize realized reasonable receiving register resolution rural ryan saving sees singing spain tools typical universe warning wars wednesday admit attitude branch brazil conducted decades dedicated definition drawing favor flag frame guest ha heaven independence institutions jackson kiss load plot possibility random recovery rent replace represent reviews scenes seeking senator sentence teeth tips trained understood academic academy accurate achieve adam afford andrew assume bbc bottle bunch category chat cheese chemical clinton competitive detail diet em favourite fruit harder index item lane mess navy normally occurred opposition parent permanent personally pleasure prefer programme representative scheme shift stood storage tank tend tight transportation ultimately unlike weekly yard anybody assets basketball button candidates combat constitution consumer counter creation crown crying dc defined depending depression describe drivers el employment exclusive excuse expert frequently golf grace hopefully identify importance kevin laid latter manufacturing mining object partners pattern performing personnel perspective pregnant premier promote revolution rooms severe sleeping suppose tool tournament turkey ve victim victims agents amazon arrest attend ban brilliant carbon catholic chose circle concert crash declared deliver depth deputy dirty doctors earned electronic error existence experiences expression factory headed interior joy jr legislation maintenance manner mate matt nearby noise origin pakistan panel personality plate practices prepare relief replaced resistance retail rice roads roof shame ships somewhat staying stronger surely tip updated writers absolute advertising agencies baseball bathroom bible cable calm championship checked client constant da dates degrees democrats doors driven dumb empire exciting expansion heavily hide incident irish linked manage messages michigan multi nfl politicians print quit refused reporting sight significantly sing soviet weapon wet widely worldwide ages anniversary attractive bike broad burn cake causing closely constantly contest deaths depends drawn fees francisco haha hardly hat height hidden hong invited letting loud manchester marine motor officially pc peak portion pounds princess protein puts raw reform regions represented respond retirement sample seats secondary solar somehow stayed suffering sydney tries ultimate unknown wilson wondering attached attacked automatically balls battery bills blind breath brief carolina chest conduct debut decade destroy differences edward engaged experts expressed external fantasy ft grab hollywood immediate introduction joseph license paint pilot pink presidential principal recognize recognized registered regularly representatives rising seasons shipping singer smoking steam suffered survive tall thats theatre therapy witness adopted aim campus cap chances childhood clinical clubs comedy commander comparison covers dan defeat defence democracy detailed entitled exact exposed fed fee injured jan jordan kinds lets loans lock musical nose objects opposed organized plastic protected purposes quote recording semi statements suspect swear techniques tie tim trend valuable wealth wise yards aged approval aspects attempts bread burning champions contain convention dancing document eggs employee en engineer equivalent facing fairly fingers ford founded functions gang graduate greek hanging inner islands le lift marked memories miller monthly mountains neighborhood operate outstanding permission porn racing recommended regulations reply republicans rid roman scientists shoulder shower solutions sons stations stephen tower tradition visited visual wheel zealand achieved admitted appointment authors barely bc bush cabinet celebrate challenges chocolate coal colour contemporary criticism davis dna effectively eric extensive faced filed formation fought gained gallery highway historic hunt improvement inch initially junior jury kong korean marks monster obtained olympic philosophy pride promised repeat returning riding rough santa settlement smell".split(" ");
+const FREQ_RANK = new Map(FREQ_WORDS.map((w,i)=>[w,i]));
+const LEVELS = {A2:{k:900,len:9}, B1:{k:1800,len:12}, B2:{k:3000,len:16}, C1:{k:3000,len:22}};
+const lemmaTry = w => [w, w.replace(/s$/,""), w.replace(/es$/,""), w.replace(/ies$/,"y"), w.replace(/ed$/,""), w.replace(/ed$/,"e"), w.replace(/d$/,""), w.replace(/ing$/,""), w.replace(/ing$/,"e"), w.replace(/ly$/,""), w.replace(/er$/,""), w.replace(/est$/,"")];
+let knownCache=null;
+function deckKnown(){
+  if(knownCache) return knownCache;
+  const k=new Set();
+  for(const c of Store.cards.values()) if(c.box>=2) for(const w of coreOf(c.en).toLowerCase().split(/\s+/)) if(w) k.add(w);
+  return knownCache=k;
+}
+function isKnownWord(w){
+  const lv=LEVELS[S().level]||LEVELS.B1, ks=deckKnown();
+  for(const f of lemmaTry(w)){ if(!f) continue; if(ks.has(f)) return true; const r=FREQ_RANK.get(f); if(r!==undefined && r<lv.k) return true; }
+  return false;
+}
+const tokensOf = t => String(t).match(/[A-Za-z]+(?:'[a-z]+)?/g) || [];
+/* чем меньше балл, тем пример понятнее: мало незнакомых слов и не слишком длинный */
+function exScore(x, c){
+  const lv=LEVELS[S().level]||LEVELS.B1, toks=tokensOf(x.en);
+  const tgt=new Set(phraseVariants(c.en).flatMap(v=>v.split(/\s+/)));
+  let unk=0;
+  toks.forEach((t,i)=>{ const w=t.toLowerCase().replace(/'.*$/,""); if(tgt.has(w)||w.length<=2) return; if(i>0 && /^[A-Z]/.test(t)) return; if(!isKnownWord(w)) unk++; });
+  return unk*4 + Math.max(0,toks.length-lv.len)*1.5 + toks.length*0.05 + (x.ru?0:0.5) + (x.mt?0.3:0);
+}
+function rankedExamples(c){
+  const ex=c.examples||[]; if(ex.length<2) return ex;
+  const pinned=ex.filter(x=>x.pin), rest=ex.filter(x=>!x.pin);
+  return [...pinned, ...rest.map(x=>({x,s:exScore(x,c)})).sort((a,b)=>a.s-b.s).map(o=>o.x)];
+}
+/* где в предложении стоит слово или фраза (в любой форме): нужно для задания с пропуском */
+function findInSentence(sentence, c){
+  const base=phraseVariants(c.en); if(!base.length) return null;
+  const isVerb=/^to\s/i.test(String(c.en).trim());
+  const vars=[...base]; if(!isVerb) base.forEach(v=>vars.push(v+"s", v+"es"));
+  const sn=String(sentence).replace(/[’‘`´]/g,"'");
+  for(const v of vars.sort((a,b)=>b.length-a.length)){
+    const rx=new RegExp("(^|[^A-Za-z'])("+v.split(/\s+/).map(escRx).join("\\s+")+")(?![A-Za-z'])","i");
+    const m=rx.exec(sn); if(m) return {text:sentence.substr(m.index+m[1].length, m[2].length), index:m.index+m[1].length};
+  }
+  return null;
+}
+function clozeFor(c){
+  for(const x of rankedExamples(c)){ if(!x.en || x.en.length>140) continue; const m=findInSentence(x.en,c); if(m && m.text.length>=2) return {x,m}; }
+  return null;
+}
+
 /* --- Tatoeba: примеры с переводом на русский --- */
 async function tatoebaSearch(q, withRu){
   const base="https://tatoeba.org/en/api_v0/search?from=eng&sort=relevance&query="+encodeURIComponent(q);
@@ -407,7 +458,7 @@ async function tatoebaSearch(q, withRu){
   for(const x of (Array.isArray(j?.results)?j.results:[])){
     const en=str(x?.text,300).trim();
     const tr=(Array.isArray(x?.translations)?x.translations.flat(2):[]).find(t=>t&&t.lang==="rus"&&str(t.text));
-    items.push({en, ru:tr?str(tr.text,300).trim():""});
+    items.push({en, ru:tr?str(tr.text,300).trim():"", src:"tat"});
   }
   return {items, state:"ok"};
 }
@@ -497,12 +548,12 @@ async function enrichInfo(en){
     // 3. офлайн-словарь произношений
     if(!out.ipa){ const c=await cmuIpa(core); if(c){ out.ipa=c; out.src.ipa="офлайн-словарь"; } }
     // 4. примеры: Tatoeba (с переводом) -> Викисловарь -> словарь
-    const t=await tatoebaExamples(en,2);
+    const t=await tatoebaExamples(en,3);
     out.tat=t.state; out.examples=t.items.slice();
-    const add=(list, hitOnly)=>{ for(const e of list){ if(out.examples.length>=2) break; const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||out.examples.some(y=>norm(y.en)===norm(x))) continue; out.examples.push({en:x, ru:""}); } };
-    if(out.examples.length<2) add(wd.examples, true);
-    if(out.examples.length<2) add(wd.examples, false);
-    if(out.examples.length<2 && d.state==="ok") add(d.examples, false);
+    const add=(list, hitOnly, src)=>{ for(const e of list){ if(out.examples.length>=3) break; const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||out.examples.some(y=>norm(y.en)===norm(x))) continue; out.examples.push({en:x, ru:"", src}); } };
+    if(out.examples.length<3) add(wd.examples, true, "wik");
+    if(out.examples.length<2) add(wd.examples, false, "wik");
+    if(out.examples.length<2 && d.state==="ok") add(d.examples, false, "dict");
     out.src.ex = out.examples.length ? (t.items.length?"Tatoeba":(wd.examples.length?"Викисловарь":"словарь")) : "";
     return out;
   })();
@@ -610,9 +661,15 @@ async function lookup(){
       senses = FREE.variants(tr, text).map(v=>({en:v, ru:text, examples:[], free:true, enriched:false}));
     }
     if(addState?.text!==text) return;
+    if(fromExample && norm(fromExample.w)===norm(text)){
+      const cx={en:fromExample.sentence, ru:"", src:"ctx"};
+      senses.forEach(sn=>{ sn.examples=[cx, ...(sn.examples||[]).filter(e=>norm(e.en)!==norm(cx.en))].slice(0,3); });
+    }
+    fromExample=null;
     addState.senses = senses; addState.loading=false;
     if(!senses.length) addState.error = "Словарь ничего не нашёл. Проверьте написание или введите перевод вручную.";
   }catch(e){
+    fromExample=null;
     if(addState?.text!==text) return;
     addState.loading=false; addState.error = lookupErrorText(e);
   }
@@ -964,11 +1021,13 @@ function filteredCards(){
   if(filter==="due") list=list.filter(isDue);
   else if(filter==="hard") list=list.filter(c=>c.fails>0||(c.lapses>0&&c.box<4));
   else if(filter==="studied") list=list.filter(c=>c.box>0);
+  else if(filter==="incomplete") list=list.filter(c=>quality(c).length>0);
   else if(filter!=="all") list=list.filter(c=>status(c)===filter);
   if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||c.tags.some(t=>t.includes(q)));
   return list.sort(SORTS[sortMode][1]);
 }
 const FILTER_EMPTY={
+  incomplete:"Все карточки заполнены полностью. Отличная колода!",
   due:"Сейчас нет слов, которые ждут повторения. Загляните позже или потренируйтесь вне графика.",
   hard:"Сложных слов пока нет. Так держать!",
   new:"Новых слов нет: все слова уже прошли обучение.",
@@ -1007,17 +1066,18 @@ function renderList(){
     return `<div class="witem">
     <div class="wrow${sel?" selected":""}" role="${selMode?"checkbox":"button"}" ${selMode?`aria-checked="${sel}"`:""} tabindex="0" data-edit="${c.id}">
       ${selMode?`<span class="chk" aria-hidden="true"></span>`:""}${sayBtn(c.en)}
-      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
+      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}${(()=>{ const q=quality(c); return q.length?` <span class="qchip" ${tipAttr("Не хватает: "+q.join(", ")+". Кнопка «Найти недостающее» в начале страницы поищет это в словарях.")}>неполная</span>`:""; })()}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
       <span class="exslot">${has?`<button type="button" class="exbtn${open?" open":""}" data-ex="${c.id}" aria-expanded="${open}" aria-label="Примеры использования" ${tipAttr(open?"Скрыть примеры":"Показать примеры использования ("+has+")")}>${CHEV}</button>`:""}</span>
       <span class="nextdue${isDue(c)?" due":""}">${dueLabel(c)}</span>
       ${boxesHtml(c)}
     </div>
-    ${open?`<ul class="ex-list wex">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`:""}
+    ${open?`<ul class="ex-list wex">${rankedExamples(c).map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${wordsHtml(x.en,true)}</div><div class="ru">${esc(x.ru||"")}</div>${srcTag(x)}</div></li>`).join("")}</ul><div class="small muted xwhint">Нажмите на незнакомое слово в примере, чтобы добавить его в колоду.</div>`:""}
     </div>`; }).join("") + `</div>` + (rest>0?`<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" type="button" id="moreBtn">Показать ещё ${Math.min(PAGE,rest)} <span class="muted">(осталось ${rest})</span></button></div>`:"");
   el.querySelectorAll("[data-edit]").forEach(r=>{
     const act=ev=>{ if(ev.target.closest("button:not(.chk)")) return; if(selMode){ const id=r.dataset.edit; selected.has(id)?selected.delete(id):selected.add(id); r.classList.toggle("selected",selected.has(id)); r.setAttribute("aria-checked",selected.has(id)); renderSelBar(); } else openEdit(r.dataset.edit); };
     r.onclick=act; r.onkeydown=e=>{ if((e.key==="Enter"||e.key===" ") && e.target===r){ e.preventDefault(); act(e); } };
   });
+  bindXw(el);
   el.querySelectorAll("[data-ex]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); const id=b.dataset.ex; openEx.has(id)?openEx.delete(id):openEx.add(id); hideTip(); const y=scrollY; renderList(); scrollTo(0,y); });
   el.querySelectorAll("[data-tagf2]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); hideTip(); tagFilter=b.dataset.tagf2; shown=PAGE; renderList(); });
   $("#moreBtn")?.addEventListener("click",()=>{ shown+=PAGE; const y=scrollY; renderList(); scrollTo(0,y); });
@@ -1158,7 +1218,7 @@ function openEdit(id){
     <label class="f">English<input class="input" id="e-en" value="${esc(c.en)}"></label>
     <label class="f">Русский<input class="input" id="e-ru" value="${esc(c.ru)}"></label>
     <label class="f">Транскрипция<input class="input" id="e-ipa" value="${esc(c.ipa)}"></label>
-    <label class="f">Примеры: по одному в строке, «English | перевод»<textarea class="input" id="e-ex">${esc(c.examples.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n"))}</textarea></label>
+    <label class="f">Примеры: по одному в строке, «English | перевод». Первая строка — главный пример, он показывается первым<textarea class="input" id="e-ex">${esc(c.examples.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n"))}</textarea></label>
     <div class="tagbox" id="e-tagbox"><label class="f"><span>Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Через запятую. По тегу слова можно фильтровать в списке и учить отдельной подборкой.">?</button></span><input class="input" id="e-tags" autocomplete="off" value="${esc((c.tags||[]).join(", "))}" placeholder="например: работа, поездка" maxlength="200"></label><div class="tagchips"></div></div>
     ${SOURCE==="free"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
     <div class="small muted">Следующее повторение: ${dueLabel(c)} · повторений: ${c.reps}</div>
@@ -1168,13 +1228,13 @@ function openEdit(id){
       <div class="row"><button class="btn" id="e-cancel">Отмена</button><button class="btn primary" id="e-save">Сохранить</button></div>
     </div>`);
   $("#e-cancel").onclick=closeModal; syncTagBox($("#e-tagbox"));
-  let pendAudio="", pendPos="";
+  let pendAudio="", pendPos=""; const pendEx=[]; const exInit=$("#e-ex").value;
   if($("#e-fetch")) $("#e-fetch").onclick=async ()=>{
     const b=$("#e-fetch"), msg=$("#e-fetchMsg"); b.disabled=true; msg.textContent="Ищу…";
     const info=await enrichInfo($("#e-en").value.trim()||c.en);
     if(!$("#e-ipa").value.trim() && info.ipa) $("#e-ipa").value=info.ipa;
     if(!$("#e-ex").value.trim() && info.examples.length){
-      const exs=info.examples.map(x=>({...x})); if(exs.some(x=>!x.ru)) await FREE.translateExamples(exs);
+      const exs=info.examples.map(x=>({...x})); if(exs.some(x=>!x.ru)) await FREE.translateExamples(exs); pendEx.push(...exs);
       $("#e-ex").value=exs.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n");
     }
     pendAudio=info.audio; pendPos=info.pos;
@@ -1185,7 +1245,10 @@ function openEdit(id){
   $("#e-save").onclick=()=>{
     if(pendAudio && !c.audio) c.audio=pendAudio; if(pendPos && !c.pos) c.pos=pendPos;
     c.en=$("#e-en").value.trim()||c.en; c.ru=$("#e-ru").value.trim()||c.ru; c.ipa=$("#e-ipa").value.trim(); c.tags=parseTags($("#e-tags").value);
-    c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); return {en, ru:ru||""}; });
+    const old=new Map([...pendEx, ...c.examples].map(x=>[norm(x.en),x]));
+    const firstOld=norm(exInit.split("\n")[0]?.split("|")[0]||"");
+    c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); const o=old.get(norm(en)), r={en, ru:ru||""}; if(o){ if(o.src) r.src=o.src; if(o.mt && norm(o.ru)===norm(ru||"")) r.mt=true; if(o.pin) r.pin=true; } return r; });
+    if(c.examples.length && norm(c.examples[0].en)!==firstOld){ c.examples.forEach(x=>delete x.pin); c.examples[0].pin=true; }
     Store.saveCard(c); closeModal(); renderAll(); toast("Сохранено");
   };
   if($("#e-master")) $("#e-master").onclick=()=>{ masterCard(c); closeModal(); renderAll(); toast("Слово выучено: прогресс 100%"); };
@@ -1209,12 +1272,60 @@ const DEMO = [
   {en:"to run late", ru:"опаздывать", ipa:"/rʌn ˈleɪt/", pos:"phrase", examples:[{en:"Sorry, I'm running late. Start without me.",ru:"Извини, я опаздываю. Начинайте без меня."},{en:"The train is running ten minutes late.",ru:"Поезд опаздывает на десять минут."}]},
   {en:"it's not rocket science", ru:"это не бином Ньютона, это несложно", ipa:"/ɪts nɒt ˈrɒkɪt ˌsaɪəns/", pos:"idiom", examples:[{en:"Come on, cooking pasta isn't rocket science.",ru:"Да ладно, сварить пасту — не бином Ньютона."},{en:"Setting up the app is not rocket science.",ru:"Настроить приложение несложно."}]},
 ];
+/* ===== цель дня: новые слова + повторения (не больше лимита). Закрытый день продлевает серию ===== */
+const goalOf=()=>S().goal||10, capOf=()=>S().revCap||40;
+const emptyDay=()=>({n:0,learned:0,reviewed:0,rf:0,right:0,total:0,closed:false});
+function goalState(){
+  const dc=deckCards(), d=Store.stats.days?.[dayKey()]||emptyDay();
+  const fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length;
+  const newTarget=Math.min(goalOf(), (d.learned||0)+fresh);
+  const revTarget=Math.min(capOf(), (d.reviewed||0)+due);      // повторений сегодня = пришедшие на повтор + уже пройденные
+  const tried=(d.reviewed||0)+(d.rf||0);                          // пройденные и не выученные тоже считаются попыткой
+  return {d, fresh, due, newTarget, revTarget, tried, newDone:Math.min(d.learned||0,newTarget), revDone:Math.min(tried,revTarget), closed:(d.learned||0)>=newTarget && tried>=revTarget};
+}
+const dayClosed = d => !!d && (d.closed===true || (d.closed===undefined && d.n>0));   // старые записи без цели считаем закрытыми
 function streakInfo(){
-  const days=Store.stats.days||{}; let n=0; let t=Date.now();
-  if(!days[dayKey(t)]) t-=DAY;
-  while(days[dayKey(t)]){ n++; t-=DAY; }
-  const last7=[]; for(let i=6;i>=0;i--) last7.push(!!days[dayKey(Date.now()-i*DAY)]);
+  const days=Store.stats.days||{}, now=Date.now(), ok=t=>dayClosed(days[dayKey(t)]);
+  let n=0, lastGap=-99;
+  for(let i=ok(now)?0:1; i<4000; i++){
+    const t=now-i*DAY;
+    if(ok(t)){ n++; continue; }
+    if(i-lastGap>=7 && ok(now-(i+1)*DAY)){ lastGap=i; continue; }   // один пропуск в неделю не рвёт серию
+    break;
+  }
+  const last7=[]; for(let i=6;i>=0;i--){ const t=now-i*DAY; last7.push(ok(t)?1:(days[dayKey(t)]?.n>0?2:0)); }
   return {n,last7};
+}
+/* порядок повторений: сначала самые просроченные и слабые */
+const reviewScore = c => (startOfDay()-startOfDay(c.due))/DAY / Math.max(1,INTERVALS[c.box]||1) + (c.fails||0)*0.5;
+const reviewOrder = (a,b) => reviewScore(b)-reviewScore(a) || a.box-b.box;
+/* разгрузка: следующий срок выбираем в пределах ±10% интервала в самый свободный день */
+function dueLoad(){ const m=new Map(); for(const c of Store.cards.values()) if(c.box>0 && c.due>Date.now()){ const t=startOfDay(c.due); m.set(t,(m.get(t)||0)+1); } return m; }
+function schedDue(box, load){
+  const base=INTERVALS[box], w=base>=7?Math.floor(base*0.1):0, t0=startOfDay();
+  let best=t0+base*DAY, bl=load.get(best)||0, bo=0;
+  for(let o=-w;o<=w;o++){ const t=t0+Math.max(1,base+o)*DAY, l=load.get(t)||0; if(l<bl || (l===bl && Math.abs(o)<bo)){ best=t; bl=l; bo=Math.abs(o); } }
+  load.set(best,(load.get(best)||0)+1);
+  return best;
+}
+/* план «Учить»: сначала повторения (до лимита), потом новые (до цели); когда цель выполнена, можно учить сверх */
+function learnPlan(excludeSeen){
+  const base=deckCards().filter(c=>!(excludeSeen&&runSeen.has(c.id)) && !closedLevel(c));
+  const revs=base.filter(c=>c.box>0).sort(reviewOrder), news=base.filter(c=>!c.box).sort((a,b)=>a.created-b.created);
+  const g=goalState(), revLeft=Math.max(0,g.revTarget-g.tried), newLeft=Math.max(0,g.newTarget-(g.d.learned||0));
+  const mix=(rv,nw)=>{ const out=[]; let i=0,j=0; while(i<rv.length||j<nw.length){ if(j<nw.length && (i>=rv.length || (j+0.5)/nw.length <= (i+0.5)/rv.length)) out.push(nw[j++]); else out.push(rv[i++]); } return out; };   // новые слова равномерно между повторениями
+  const planned=mix(revs.slice(0,revLeft), news.slice(0,newLeft));
+  const extra=!planned.length && (revs.length>0||news.length>0);
+  return {list: extra?mix(revs,news):planned, extra, revs:Math.min(revs.length,revLeft), news:Math.min(news.length,newLeft), g};
+}
+/* накопилось слишком много повторений: переносим лишние на ближайшие дни, не больше лимита в день */
+function spreadBacklog(){
+  const cap=capOf(), due=allCards().filter(isDue).sort(reviewOrder), rest=due.slice(cap);
+  if(!rest.length) return 0;
+  const load=dueLoad(), t0=startOfDay(); let day=1;
+  for(const c of rest){ while((load.get(t0+day*DAY)||0)>=cap) day++; c.due=t0+day*DAY; load.set(c.due,(load.get(c.due)||0)+1); }
+  Store.saveMany(rest);
+  return rest.length;
 }
 const FEATS=[
   {c:"lime", t:"Перевод за секунду", p:"Введите слово на русском или английском: варианты перевода подберутся сами.", i:'<path d="M4 5h9M8.5 3v2M6 5c.6 3 3 6 6 7M12 5c-.6 3-3 6-6 7"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/>'},
@@ -1238,11 +1349,23 @@ function renderLearn(){
     bindGo(el); return;
   }
   const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
-  const dc=deckCards(), fresh=dc.filter(c=>!c.box).length, due=dc.filter(isDue).length, todo=fresh+due, closed=dc.filter(closedLevel).length, n=Math.min(S().batch, todo), nP=Math.min(S().batch, closed);
-  const st=streakInfo(), today=Store.stats.days?.[dayKey()];
+  const dc=deckCards(), closed=dc.filter(closedLevel).length, nP=Math.min(S().batch, closed);
+  const plan=learnPlan(false), gs=plan.g, todo=plan.list.length, n=Math.min(S().batch, todo);
+  if(gs.newTarget===0 && gs.revTarget===0 && !gs.d.closed){ const d=Store.stats.days[dayKey()] ||= emptyDay(); d.closed=true; Store.saveStats(); }   // задач на сегодня нет: день закрыт сам
+  const st=streakInfo();
   const studied=cs.filter(c=>c.box>0).length, longterm=cs.filter(c=>c.box>=4).length, dueAll=cs.filter(isDue).length, hard=cs.filter(c=>c.fails>0 || (c.lapses>0 && c.box<4)).length;
   const deckName=S().deck?`«${esc(S().deck)}»`:"все слова";
-  const msg = today?.n ? `Сегодня уже ${today.n} ${plural(today.n,"слово","слова","слов")}. Так держать!` : st.n ? "Позанимайтесь сегодня, чтобы серия не прервалась." : "Позанимайтесь сегодня и запустите свою серию.";
+  const msg = gs.closed ? "День закрыт. Так держать!" : st.n ? "Закройте цель дня, чтобы серия не прервалась." : "Закройте цель дня и запустите свою серию.";
+  const pct=(a,b)=>b?Math.round(a/b*100):100, tomorrow=cs.filter(c=>c.box>0 && c.due>=startOfDay()+DAY && c.due<startOfDay()+2*DAY).length;
+  const leech=cs.filter(c=>c.fails>=3).length, backlog=dueAll>capOf()*2;
+  const goalBox=`<section class="panel goal${gs.closed?" done":""}" aria-label="Цель на сегодня">
+    <div class="goal-h"><b>Цель на сегодня</b><button class="tip" type="button" aria-label="Пояснение" data-tip="Чтобы закрыть день, выучите заданное число новых слов и пройдите повторения, которые пришли на сегодня (но не больше лимита). Учить можно и больше. Закрытый день продлевает серию. Цель и лимит меняются в настройках.">?</button><span class="chip${gs.closed?" ok":""}">${gs.closed?"день закрыт ✓":"в процессе"}</span></div>
+    <div class="goal-row"><span>Новые слова</span><div class="gbar" role="img" aria-label="Новые слова ${gs.newDone} из ${gs.newTarget}"><i style="width:${pct(gs.newDone,gs.newTarget)}%"></i></div><b>${gs.newDone}/${gs.newTarget}</b></div>
+    <div class="goal-row"><span>Повторения</span><div class="gbar" role="img" aria-label="Повторения ${gs.revDone} из ${gs.revTarget}"><i style="width:${pct(gs.revDone,gs.revTarget)}%"></i></div><b>${gs.revDone}/${gs.revTarget}</b></div>
+    <div class="small muted">${tomorrow?`Завтра ждут повторения: ${tomorrow}. `:""}Цель: ${goalOf()} новых, лимит повторений: ${capOf()}. <button class="pill-link" type="button" data-go="prefs">Изменить</button></div>
+  </section>`;
+  const notes = (backlog?`<div class="resume" id="blBox"><div><b>Накопилось повторений: ${dueAll}</b><div class="small muted">Каждый день показываем самые важные, не больше ${capOf()}. Остальные можно разложить на ближайшие дни: уровни не изменятся.</div></div><div class="row"><button class="btn primary" type="button" data-spread ${tipAttr("Перенесёт лишние повторения на ближайшие дни, чтобы в каждом было не больше лимита. Прогресс слов не меняется.")}>Разложить</button></div></div>`:"")
+    + (leech?`<div class="resume" id="lcBox"><div><b>Проблемные слова: ${leech}</b><div class="small muted">Слова, в которых вы ошиблись три раза и больше. Откройте карточку и поправьте перевод или пример: так они запомнятся легче.</div></div><div class="row"><button class="btn" type="button" data-gof="hard">Показать</button></div></div>`:"");
   const deckBar = `<div class="sec-head"><h2>Подборки по тегам</h2></div>` + (tagsAll.length ? `<div class="deckbar"><span class="label">Учить<button class="tip" type="button" aria-label="Пояснение" data-tip="Выберите тег, и «Учить» и «Тренировка» возьмут только слова с ним. Подборку можно сменить в любой момент. Прогресс у слова один на все подборки: выученное слово вернётся на повторение только в свой срок, даже если оно есть в другой подборке.">?</button></span><div class="filters" id="deckChips"><button type="button" data-deck="" aria-pressed="${!S().deck}" ${tipAttr("Учить все слова колоды")}>Все слова · ${cs.length}</button>${tagsAll.map(([t,k])=>`<button type="button" data-deck="${esc(t)}" aria-pressed="${S().deck===t}" ${tipAttr("Учить и повторять только слова с тегом «"+t+"»")}>${esc(t)} · ${k}</button>`).join("")}</div></div>`
     : `<div class="panel small muted" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between">Добавьте слову тег, например «работа», и его можно будет учить отдельной подборкой.<button class="pill-link" data-go="words">К словам</button></div>`);
   const ss=savedSess(), ssLeft=ss?ss.rounds.reduce((n,r)=>n+(r.queue?.length||0),0):0;
@@ -1250,9 +1373,9 @@ function renderLearn(){
   el.innerHTML = resumeBox + `
   <section class="prog" aria-label="Ваш прогресс">
     <div class="prog-streak">
-      <span class="hero-kicker">Серия${`<button class="tip tip-light" type="button" aria-label="Пояснение" data-tip="Сколько дней подряд вы занимались. Достаточно одной завершённой тренировки в день. Полоски показывают последние 7 дней, справа сегодняшний.">?</button>`}</span>
+      <span class="hero-kicker">Серия${`<button class="tip tip-light" type="button" aria-label="Пояснение" data-tip="Сколько дней подряд вы закрывали цель дня. Один пропуск в неделю серию не прерывает. Полоски: последние 7 дней, справа сегодня. Тёмная — день закрыт, полупрозрачная — занимались, но цель не закрыли.">?</button>`}</span>
       <div class="prog-num"><b>${st.n}</b><span>${plural(st.n,"день","дня","дней")} подряд</span></div>
-      <div class="streak" aria-label="Активность за 7 дней">${st.last7.map(on=>`<span class="${on?"on":""}"></span>`).join("")}</div>
+      <div class="streak" aria-label="Активность за 7 дней">${st.last7.map(v=>`<span class="${v===1?"on":v===2?"half":""}"></span>`).join("")}</div>
       <p>${msg}</p>
     </div>
     <div class="prog-stats">
@@ -1262,13 +1385,15 @@ function renderLearn(){
     </div>
   </section>
 
+  ${goalBox}
+  ${notes}
   <div class="sec-head"><h2>Что делаем сегодня</h2><span class="chip">подборка: ${deckName}</span></div>
   <div class="grid3 acts">
     <div class="ftile lime compact hero-cta">
       <div class="label">Учить</div>
       <div class="bignum">${todo}</div>
-      <p>${todo?`${fresh} ${plural(fresh,"новое","новых","новых")} · ${due} на повторении`:"Всё изучено на текущих уровнях"}</p>
-      <button class="btn primary" data-start="learn" ${todo?"":"disabled"} ${tipAttr("Подборка из слов, у которых текущий уровень ещё не закрыт: новые и те, у которых пришёл срок повтора. Без ошибок уровень растёт, с ошибками слово остаётся в подборке.")}>${todo?`Учить ${n} ${plural(n,"слово","слова","слов")}`:"Нечего учить"}</button>
+      <p>${!todo?"Всё изучено на текущих уровнях":plan.extra?"Цель дня выполнена. Можно учить ещё":`${plan.news} ${plural(plan.news,"новое","новых","новых")} · ${plan.revs} на повторении`}</p>
+      <button class="btn primary" data-start="learn" ${todo?"":"disabled"} ${tipAttr("Сначала повторения (самые важные, не больше лимита), потом новые слова до цели дня. Без ошибок уровень растёт, с ошибками слово остаётся в подборке.")}>${todo?`${plan.extra?"Учить ещё":"Учить"} ${n} ${plural(n,"слово","слова","слов")}`:"Нечего учить"}</button>
       <span class="deco ring"></span>
     </div>
     <div class="ftile compact">
@@ -1298,6 +1423,11 @@ function renderLearn(){
   el.querySelectorAll("[data-deck]").forEach(b=>b.onclick=()=>{ hideTip(); S().deck=b.dataset.deck; Store.saveSettings(); renderLearn(); });
   el.querySelectorAll("[data-gof]").forEach(b=>b.onclick=()=>{ hideTip(); filter=b.dataset.gof; tagFilter=""; $("#filters").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.f===filter)); go("words"); });
   el.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>openAuth(b.dataset.auth));
+  el.querySelector("[data-spread]")?.addEventListener("click",()=>{
+    hideTip(); const k=Math.max(0,dueAll-capOf());
+    $("#blBox").innerHTML=`<div><b>Перенести ${k} ${plural(k,"повторение","повторения","повторений")} на ближайшие дни?</b><div class="small muted">Не больше ${capOf()} в день. Уровни слов не изменятся.</div></div><div class="row"><button class="btn" type="button" id="blNo">Отмена</button><button class="btn primary" type="button" id="blYes">Перенести</button></div>`;
+    $("#blNo").onclick=renderLearn; $("#blYes").onclick=()=>{ const m=spreadBacklog(); renderAll(); toast(`Перенесено повторений: ${m}`); };
+  });
   bindGo(el);
 }
 function bindGo(el){ el.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ go(b.dataset.go); if(b.dataset.go==="words") setTimeout(()=>addInput.focus(),50); }); }
@@ -1313,7 +1443,7 @@ const closedLevel = c => c.box>0 && !isDue(c);          // уровень зак
 function pickPool(kind){
   const base=deckCards().filter(c=>!runSeen.has(c.id));  // 1) тег (если выбран)  2) критерий уровня
   if(kind==="practice") return base.filter(closedLevel).sort((a,b)=>(a.last||0)-(b.last||0));
-  return base.filter(c=>!closedLevel(c)).sort((a,b)=> (a.box>0?0:1)-(b.box>0?0:1) || (a.box>0 ? a.due-b.due : a.created-b.created));
+  return learnPlan(true).list;
 }
 function startRun(kind, fresh=true){
   if(fresh) runSeen=new Set();
@@ -1322,18 +1452,40 @@ function startRun(kind, fresh=true){
 }
 const startLearn=(fresh=true)=>startRun("learn",fresh);
 const startPractice=(fresh=true)=>startRun("practice",fresh);
+/* доли заданий зависят от уровня слова: на низких больше узнавания, на высоких больше вспоминания; все форматы встречаются на всех уровнях */
+const TASK_W={ low:{cf:26,ma:22,cr:20,cl:8,le:16,ty:8}, mid:{cf:6,ma:10,cr:16,cl:22,le:22,ty:24}, high:{cf:2,ma:4,cr:6,cl:30,le:16,ty:42} };
+const TASK_MUST={ low:["le","ty"], mid:["ty"], high:["ty","cl"] };
+const TASK_N={ low:5, mid:4, high:3 };
+const bandOf=c=>c.box<=2?"low":c.box<=4?"mid":"high";
+function taskOn(t,c){ const m=modesOn(); if(t==="cf"||t==="cr") return !!m.choice; if(t==="ma") return !!m.match; if(t==="le") return !!m.letters; if(t==="ty") return !!m.typing; if(t==="cl") return m.cloze!==false && !!clozeFor(c); return false; }
+function assignTasks(c, noMatch=false){
+  const b=bandOf(c), on=Object.keys(TASK_W[b]).filter(t=>taskOn(t,c) && !(noMatch&&t==="ma"));
+  if(!on.length) return ["cf"];
+  const chosen=TASK_MUST[b].filter(t=>on.includes(t));
+  let pool=on.filter(t=>!chosen.includes(t));
+  while(chosen.length<Math.min(TASK_N[b],on.length) && pool.length){
+    const tot=pool.reduce((x,t)=>x+TASK_W[b][t],0); let r=Math.random()*tot, pick=pool[pool.length-1];
+    for(const t of pool){ r-=TASK_W[b][t]; if(r<=0){ pick=t; break; } }
+    chosen.push(pick); pool=pool.filter(t=>t!==pick);
+  }
+  return chosen;
+}
+const roundKey = r => r.type==="choice" ? (r.dir==="rev"?"cr":"cf") : ({match:"ma",cloze:"cl",letters:"le",typing:"ty"})[r.type];
 function buildSession(kind, list){
-  const m=modesOn(), ids=list.map(c=>c.id), rounds=[];
+  knownCache=null;
+  const ids=list.map(c=>c.id), bk={cf:[],ma:[],cr:[],cl:[],le:[],ty:[]};
   ids.forEach(i=>runSeen.add(i));
-  rounds.push({type:"intro", queue:ids.slice()});
-  if(m.choice) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
-  if(m.match && ids.length>=2){ const sh=shuffle(ids), ch=[]; for(let i=0;i<sh.length;i+=5) ch.push(sh.slice(i,i+5)); if(ch.length>1 && ch[ch.length-1].length<2){ ch[ch.length-2].push(...ch.pop()); } rounds.push({type:"match", queue:ch}); }
-  if(m.choice) rounds.push({type:"choice", dir:"rev", queue:shuffle(ids)});
-  if(m.letters) rounds.push({type:"letters", queue:shuffle(ids)});
-  if(m.typing) rounds.push({type:"typing", queue:shuffle(ids)});
-  if(rounds.length===1) rounds.push({type:"choice", dir:"fwd", queue:shuffle(ids)});
+  list.forEach(c=>assignTasks(c).forEach(t=>bk[t].push(c.id)));
+  if(bk.ma.length===1){ const id=bk.ma.pop(); const alt=["cr","cf","ty"].find(t=>!bk[t].includes(id) && (t==="ty"||modesOn().choice)); if(alt) bk[alt].push(id); }
+  const rounds=[{type:"intro", queue:list.filter(c=>!c.box).map(c=>c.id)}];   // знакомство только для новых слов: повторения идут сразу в упражнения
+  rounds.push({type:"choice", dir:"fwd", queue:shuffle(bk.cf)});
+  { const sh=shuffle(bk.ma), ch=[]; for(let i=0;i<sh.length;i+=5) ch.push(sh.slice(i,i+5)); if(ch.length>1 && ch[ch.length-1].length<2){ ch[ch.length-2].push(...ch.pop()); } rounds.push({type:"match", queue:ch}); }
+  rounds.push({type:"choice", dir:"rev", queue:shuffle(bk.cr)});
+  rounds.push({type:"cloze", queue:shuffle(bk.cl)});
+  rounds.push({type:"letters", queue:shuffle(bk.le)});
+  rounds.push({type:"typing", queue:shuffle(bk.ty)});
   sess={kind, ids, rounds, r:0, done:0, mistakes:Object.fromEntries(ids.map(i=>[i,0])), skipped:new Set(), answers:0, right:0, busy:false};
-  sess.total = rounds.reduce((s,r)=>s+r.queue.length,0);
+  sess.total = rounds.reduce((n,r)=>n+r.queue.length,0);
   $("#sess").hidden=false; document.body.style.overflow="hidden";
   next();
 }
@@ -1356,7 +1508,7 @@ function savedSess(){
 function resumeSess(){
   const s=savedSess(); if(!s) return;
   const alive=new Set(s.ids.filter(id=>Store.cards.has(id)));
-  const rounds=s.rounds.filter(r=>r&&["intro","choice","match","letters","typing"].includes(r.type)&&Array.isArray(r.queue)).map(r=>({type:r.type, dir:r.dir, queue: r.type==="match" ? r.queue.map(g=>(Array.isArray(g)?g:[]).filter(x=>alive.has(x))).filter(g=>g.length>=2) : r.queue.filter(x=>typeof x==="string"&&alive.has(x))}));
+  const rounds=s.rounds.filter(r=>r&&["intro","choice","match","cloze","letters","typing"].includes(r.type)&&Array.isArray(r.queue)).map(r=>({type:r.type, dir:r.dir, queue: r.type==="match" ? r.queue.map(g=>(Array.isArray(g)?g:[]).filter(x=>alive.has(x))).filter(g=>g.length>=2) : r.queue.filter(x=>typeof x==="string"&&alive.has(x))}));
   sess={kind:s.kind, ids:[...alive], rounds, r:Math.min(+s.r||0, rounds.length), done:+s.done||0, mistakes:Object.fromEntries([...alive].map(id=>[id,+s.mistakes?.[id]||0])), skipped:new Set((s.skipped||[]).filter(id=>alive.has(id))), answers:+s.answers||0, right:+s.right||0, busy:false};
   sess.total=sess.done+rounds.reduce((n,r)=>n+r.queue.length,0);
   alive.forEach(id=>runSeen.add(id));
@@ -1375,7 +1527,7 @@ function next(){
   stopSpeech(); sess.busy=false; saveSess();
   sess.cur = typeof round.queue[0]==="string" ? round.queue[0] : null;   // в «парах» карточка не одна
   closeSessMenu(); $("#sessMore").hidden = !sess.cur;
-  ({intro:stepIntro, choice:stepChoice, match:stepMatch, letters:stepLetters, typing:stepTyping})[round.type](round, round.queue[0]);
+  ({intro:stepIntro, choice:stepChoice, match:stepMatch, cloze:stepCloze, letters:stepLetters, typing:stepTyping})[round.type](round, round.queue[0]);
 }
 /* отложенное действие: срабатывает, только если тренировка и раунд не изменились */
 function later(fn, ms){ const tok=sess, r=tok&&tok.r, q=tok&&tok.rounds[tok.r]?.queue.length; setTimeout(()=>{ if(sess===tok && tok && !tok.finished && tok.r===r && tok.rounds[tok.r]?.queue.length===q) fn(); }, ms); }
@@ -1386,9 +1538,41 @@ function done(ok, id, requeue=true){
   if(id!==undefined){ sess.answers++; if(ok) sess.right++; else { sess.mistakes[id]++; if(requeue){ round.queue.push(id); sess.total++; } } }
   next();
 }
-const MODE = {intro:"Знакомство", choice:"Выберите перевод", match:"Соедините пары", letters:"Соберите слово из букв", typing:"Напишите по-английски"};
+const MODE = {intro:"Знакомство", choice:"Выберите перевод", match:"Соедините пары", cloze:"Вставьте пропущенное", letters:"Соберите слово из букв", typing:"Напишите по-английски"};
 function head(type, extra=""){ return `<div class="mode-tag"><span class="label">${MODE[type]}</span>${extra}</div>`; }
-function exHtml(c, n=2){ return c.examples?.length ? `<ul class="ex-list">${c.examples.slice(0,n).map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>` : ""; }
+const SRC_NAME={tat:"Tatoeba", wik:"Викисловарь", dict:"словарь", ctx:"из вашего примера"};
+const SRC_TIP={tat:"Предложение из Tatoeba: его написали и проверили люди.", wik:"Пример из Викисловаря.", dict:"Пример из словаря.", ctx:"Предложение из примера, на который вы нажали."};
+function srcTag(x, onlyWarn=false){
+  const t=[]; if(!onlyWarn && SRC_NAME[x.src]) t.push(SRC_NAME[x.src]);
+  if(x.mt) t.push("машинный перевод"); else if(!x.ru) t.push("без перевода");
+  if(!t.length) return "";
+  const warn=x.mt||!x.ru;
+  return `<span class="exsrc${warn?" warn":""}" ${tipAttr(warn?"Русский перевод сделал автоматический переводчик (или его нет), он может быть неточным. Проверьте и поправьте в карточке.":(SRC_TIP[x.src]||""))}>${t.join(" · ")}</span>`;
+}
+function wordsHtml(t, click){
+  if(!click) return esc(t);
+  const own=new Set(); for(const c of Store.cards.values()) for(const w of coreOf(c.en).toLowerCase().split(/\s+/)) own.add(w);
+  return String(t).split(/([A-Za-z]+(?:'[a-z]+)?)/).map((p,i)=>{
+    if(i%2===0) return esc(p);
+    const w=p.toLowerCase().replace(/'.*$/,""); if(w.length<2) return esc(p);
+    return `<button type="button" class="${own.has(w)?"xw own":isKnownWord(w)?"xw":"xw new"}" data-xw="${esc(w)}">${esc(p)}</button>`;
+  }).join("");
+}
+function exHtml(c, n=2, o={}){ const l=rankedExamples(c).slice(0,n); return l.length ? `<ul class="ex-list">${l.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${wordsHtml(x.en,o.click)}</div><div class="ru">${esc(x.ru||"")}</div>${srcTag(x,!o.tags)}</div></li>`).join("")}</ul>` : ""; }
+/* слово из примера -> в колоду: открываем «Слова» и сразу ищем перевод, предложение уходит первым примером */
+let fromExample=null;
+function addFromExample(w, sentence){
+  const have=findDupEn(w); if(have){ toast(`«${have.en}» уже в колоде`); return; }
+  fromExample={w, sentence:String(sentence).trim().slice(0,300)};
+  go("words"); addInput.value=w; addInput.dispatchEvent(new Event("input")); scrollTo(0,0); lookup();
+}
+function bindXw(el){ el.querySelectorAll("[data-xw]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); hideTip(); addFromExample(b.dataset.xw, b.closest(".en").textContent); }); }
+function quality(c){
+  const m=[]; if(!c.ipa) m.push("транскрипция");
+  if(!c.examples.length) m.push("примеры");
+  else { if(c.examples.length<2) m.push("второй пример"); if(c.examples.some(x=>!x.ru)) m.push("перевод примеров"); else if(c.examples.every(x=>x.mt)) m.push("проверка перевода примеров"); }
+  return m;
+}
 const body = () => $("#sessBody");
 
 function stepIntro(round, id){
@@ -1413,10 +1597,10 @@ function stepIntro(round, id){
     const rep=pickPool(sess.kind).find(x=>!sess.ids.includes(x.id));
     if(rep){
       runSeen.add(rep.id); sess.ids.push(rep.id); sess.mistakes[rep.id]=0;
+      const tasks=assignTasks(rep,true);
       for(const r of sess.rounds){
-        if(r.type==="intro") r.queue.push(rep.id);
-        else if(r.type==="match"){ if(r.queue.length) r.queue[r.queue.length-1].push(rep.id); }
-        else r.queue.splice(Math.floor(Math.random()*(r.queue.length+1)),0,rep.id);
+        if(r.type==="intro"){ if(!rep.box) r.queue.push(rep.id); }
+        else if(r.type!=="match" && tasks.includes(roundKey(r))) r.queue.splice(Math.floor(Math.random()*(r.queue.length+1)),0,rep.id);
       }
     }
     sess.total = sess.done + sess.rounds.reduce((s,r)=>s+r.queue.length,0);
@@ -1478,7 +1662,7 @@ function stepMatch(round, group){
   });
 }
 function contextHtml(c){
-  const x=c.examples?.find(e=>e.ru); if(!x) return "";
+  const x=rankedExamples(c).find(e=>e.ru); if(!x) return "";
   return `<div class="context">${esc(x.ru)}</div>`;
 }
 function stepLetters(round, id){
@@ -1513,6 +1697,41 @@ function stepLetters(round, id){
   };
   renderTiles();
   sess.keyHandler = e=>{ if(e.key.length!==1) return; const k=e.key.toLowerCase(); const btn=[...$("#tiles").children].find(x=>x.textContent===k && tiles.find(t=>String(t.k)===x.dataset.k)?.ch===chars[letterIdx[pos]]?.toLowerCase()) || [...$("#tiles").children].find(x=>x.textContent===k); if(btn){ e.preventDefault(); press(btn); } };
+}
+function stepCloze(round, id){
+  const c=cardOf(id), cz=clozeFor(c);
+  if(!cz) return stepTyping(round,id);
+  const {x,m}=cz, sen=x.en, before=sen.slice(0,m.index), after=sen.slice(m.index+m.text.length), target=m.text;
+  let hinted=false;
+  body().innerHTML = head("cloze") + `
+  <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div></div>
+  <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="слово или фраза в нужной форме" aria-label="Пропущенное слово">
+  <div class="row" style="justify-content:space-between"><div class="row"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div><button class="btn primary" type="submit" id="check">Проверить</button></div></form>
+  <div id="fb"></div>`;
+  const ti=$("#ti"); ti.focus();
+  const fillIn=ok=>{ $("#cz").innerHTML=`${esc(before)}<span class="blank fill ${ok?"right":"wrong"}">${esc(target)}</span>${esc(after)}`; };
+  const accept=v=>{ const a=norm(v), t=norm(target); if(a===t) return "exact"; if(t.length>=5 && lev(a,t)<=1) return "typo"; return null; };
+  const finishWrong=shown=>{
+    ti.disabled=true; ti.classList.add("wrong"); $("#check").disabled=true; $("#hint").disabled=true; $("#dunno").disabled=true; fillIn(false);
+    $("#fb").innerHTML=`<div class="feedback no">${shown?"":"Не совсем. "}Нужно: <b>${esc(target)}</b>${norm(target)!==norm(c.en)?` <span class="muted">(слово из карточки: ${esc(c.en)})</span>`:""}</div><div class="sess-foot"><button class="btn primary" id="go">Дальше</button></div>`;
+    autoSpeak(sen,"en"); $("#go").onclick=()=>done(false,id); $("#go").focus();
+  };
+  $("#tf").onsubmit=e=>{
+    e.preventDefault(); if(sess.busy) return;
+    const v=ti.value; if(!v.trim()) return;
+    const r=accept(v);
+    if(r){ sess.busy=true; ti.classList.add("right"); ti.disabled=true; fillIn(true); autoSpeak(sen,"en");
+      if(r==="typo"){ $("#fb").innerHTML=`<div class="feedback ok">Засчитано, но с опечаткой: <b>${esc(target)}</b></div><div class="sess-foot"><button class="btn primary" id="go">Дальше</button></div>`; $("#go").onclick=()=>done(!hinted,id,false); $("#go").focus(); }
+      else later(()=>done(!hinted,id,false), speakPause(sen));
+    } else { sess.busy=true; finishWrong(false); }
+  };
+  $("#hint").onclick=()=>{
+    hinted=true; const cur=ti.value; let i=0;
+    while(i<cur.length && i<target.length && cur[i].toLowerCase()===target[i].toLowerCase()) i++;
+    ti.value=target.slice(0,i+1); ti.focus();
+    if(i+1>=target.length){ sess.busy=true; finishWrong(true); }
+  };
+  $("#dunno").onclick=()=>{ sess.busy=true; finishWrong(true); };
 }
 function stepTyping(round, id){
   const c=cardOf(id), target=c.en;
@@ -1591,7 +1810,7 @@ function closeSess(){ try{ speechSynthesis.cancel(); }catch{} $("#qc")?.remove()
 function finish(){
   sess.finished=true; updateBar(); $("#sessMore").hidden=true; closeSessMenu(); clearSavedSess();
   const now=Date.now(), rows=[], practice=sess.kind==="practice", kind=sess.kind;
-  let learnedN=0, reviewedN=0;
+  let learnedN=0, reviewedN=0, rfN=0; const load=dueLoad();
   for(const id of sess.ids){
     const c=cardOf(id); if(!c) continue;
     const m=sess.mistakes[id], skip=sess.skipped.has(id), wasNew=!c.box;
@@ -1599,27 +1818,32 @@ function finish(){
     let ok=false, note="";
     if(skip || m===0){
       c.box = skip ? (wasNew?4:Math.min(7,c.box+1)) : (wasNew?2:Math.min(7,c.box+1));
-      c.fails=0; c.due=startOfDay(now)+INTERVALS[c.box]*DAY; c.reps++; ok=true;
+      c.fails=0; c.due=schedDue(c.box,load); c.reps++; ok=true;
       wasNew?learnedN++:reviewedN++;
     } else {
       // неудача = не справились со словом в этой подборке (одна и больше ошибок), считается один раз
       if(c.box>1){ c.box--; c.lapses++; note=`уровень снижен до ${c.box}`; }
       else note="не изучено, слово останется в подборке";
       c.fails=Math.min(99,c.fails+1);
+      if(!wasNew) rfN++;
+      if(c.fails>=3) note+=(note?"; ":"")+"проблемное слово: поправьте карточку";
     }
     c.last=now; Store.saveCard(c);
     rows.push({c,m,skip,ok,note});
   }
-  const k=dayKey(); const d=Store.stats.days[k] ||= {n:0,learned:0,reviewed:0,right:0,total:0};
-  d.n+=rows.length; d.learned+=learnedN; d.reviewed+=reviewedN; d.right+=sess.right; d.total+=sess.answers;
+  const k=dayKey(); const d=Store.stats.days[k] ||= emptyDay();
+  d.n+=rows.length; d.learned+=learnedN; d.reviewed+=reviewedN; d.rf=(d.rf||0)+rfN; d.right+=sess.right; d.total+=sess.answers;
+  const wasClosed=!!d.closed; if(!practice && goalState().closed) d.closed=true; else if(d.closed===undefined) d.closed=false;
+  const justClosed=!wasClosed && !!d.closed;
   Store.saveStats();
+  const gs=goalState();
   const acc = sess.answers ? Math.round(sess.right/sess.answers*100) : 100;
   const clean=rows.filter(r=>!r.m).length, okN=rows.filter(r=>r.ok).length;
   const more=pickPool(kind).length;
   const title = practice?"Тренировка завершена":"Обучение завершено";
   const sub = practice ? "Прогресс слов не изменился: они вернутся на повторение в свой срок." : `Изучено на текущем уровне: ${okN} из ${rows.length}`;
   body().innerHTML = `<div class="flash" style="gap:6px"><div class="label">${title}</div>
-    <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div><div class="small muted">${sub}</div></div>
+    <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div><div class="small muted">${sub}</div>${practice?"":`<div class="small" style="margin-top:6px"><b>Цель дня:</b> новые ${gs.newDone}/${gs.newTarget} · повторения ${gs.revDone}/${gs.revTarget}${justClosed?` · <b>день закрыт!</b> Серия: ${streakInfo().n} ${plural(streakInfo().n,"день","дня","дней")}`:gs.closed?" · день закрыт":""}</div>`}</div>
     <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.ok?"ok":"no"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${practice?dueLabel(r.c):r.ok?dueLabel(r.c):r.note}</span></div>`).join("")}</div>
     <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 180 дней).">Считать выученными (${clean})</button>`:""}${more?`<button class="btn primary" id="more">${practice?"Тренировать далее":"Изучать далее"}</button>`:""}<button class="btn" id="fin">Закончить</button></div>`;
   $("#fin").onclick=closeSess;
@@ -1706,10 +1930,17 @@ function renderPrefs(){
     <div class="setrow"><div class="lbl"><b>Сначала показывать</b><span>язык лицевой стороны карточки</span></div>${seg("first",[["en","English"],["ru","Русский"]])}</div>
   </div>
   <div class="panel">
+    <div class="label" style="margin-bottom:4px">Цель дня</div>
+    <div class="setrow"><div class="lbl"><b>Новых слов в день<button class="tip" type="button" aria-label="Пояснение" data-tip="Столько новых слов нужно выучить, чтобы день считался закрытым. Можно учить и больше, но этого достаточно для серии.">?</button></b><span>сколько слов вы хотите выучить за день</span></div>${seg("goal",[[3,"3"],[5,"5"],[10,"10"],[15,"15"],[20,"20"],[30,"30"],[50,"50"]])}</div>
+    <div class="setrow"><div class="lbl"><b>Лимит повторений в день<button class="tip" type="button" aria-label="Пояснение" data-tip="Сколько повторений нужно пройти за день. Если слов на повторении больше, показываем самые важные, остальные подождут. Так большая колода не превращается в гору долгов.">?</button></b><span>больше не требуется для закрытия дня</span></div>${seg("revCap",[[15,"15"],[25,"25"],[40,"40"],[60,"60"],[100,"100"]])}</div>
+    <div class="setrow"><div class="lbl"><b>Уровень английского<button class="tip" type="button" aria-label="Пояснение" data-tip="Влияет на подбор примеров: сначала показываем те, где мало незнакомых слов и нет лишней длины. Слова из вашей колоды с уровнем 2 и выше считаются знакомыми.">?</button></b><span>для подбора понятных примеров</span></div>${seg("level",[["A2","A2"],["B1","B1"],["B2","B2"],["C1","C1"]])}</div>
+  </div>
+  <div class="panel">
     <div class="label" style="margin-bottom:4px">Форматы упражнений</div>
     ${sw("choice","Выбор перевода","4 варианта, в обе стороны")}
     ${sw("match","Сопоставление пар","до 5 пар на экране")}
     ${sw("letters","Сборка из букв","слово собирается из перемешанных букв")}
+    ${sw("cloze","Пропуск в предложении","нужно вписать слово в нужной форме, берётся из примера карточки")}
     ${sw("typing","Ввод с клавиатуры","без подсказки буквами")}
   </div>
   <div class="panel">
@@ -1742,7 +1973,7 @@ function renderPrefs(){
   $("#voice").onchange=e=>{ s.voice=e.target.value; save(); tts("Nice to meet you","en"); };
   $("#native").onchange=e=>{ s.native=e.target.checked; save(); };
   if($("#mmEmail")) $("#mmEmail").onchange=e=>{ s.mmEmail=e.target.value.trim(); save(); toast(s.mmEmail?"Email сохранён":"Email убран"); };
-  el.querySelectorAll("[data-seg]").forEach(g=>g.onclick=e=>{ const b=e.target.closest("button"); if(!b) return; s[g.dataset.seg]=b.dataset.v; save(); renderPrefs(); });
+  el.querySelectorAll("[data-seg]").forEach(g=>g.onclick=e=>{ const b=e.target.closest("button"); if(!b) return; const v=b.dataset.v; s[g.dataset.seg]=/^\d+$/.test(v)?+v:v; save(); renderPrefs(); });
   el.querySelectorAll("[data-mode]").forEach(i=>i.onchange=()=>{ s.modes[i.dataset.mode]=i.checked; if(!Object.values(s.modes).some(Boolean)){ s.modes.choice=true; toast("Хотя бы один формат нужен — оставила выбор перевода"); renderPrefs(); } save(); });
   $("#exp").onclick=()=>{
     const json=JSON.stringify({cards:allCards(), stats:Store.stats},null,0);
@@ -2108,7 +2339,7 @@ function go(v){
   renderView(); window.scrollTo(0,0);
 }
 function renderView(){ ({learn:renderLearn, words:renderList, stats:renderStats, prefs:renderPrefs})[view](); }
-function renderAll(){ renderView(); setSync(); }
+function renderAll(){ knownCache=null; renderView(); setSync(); }
 $("#toLearn").onclick=()=>go("learn");
 $("#tabs").onclick=e=>{ const b=e.target.closest("button"); if(b) go(b.dataset.view); };
 
