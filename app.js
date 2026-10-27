@@ -1380,19 +1380,12 @@ function spreadBacklog(){
   Store.saveMany(rest);
   return rest.length;
 }
-const FEATS=[
-  {c:"lime", t:"Перевод за секунду", p:"Введите слово на русском или английском: варианты перевода подберутся сами.", i:'<path d="M4 5h9M8.5 3v2M6 5c.6 3 3 6 6 7M12 5c-.6 3-3 6-6 7"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/>'},
-  {c:"", t:"Примеры и звук", p:"Транскрипция, примеры с переводом и озвучка в каждой карточке.", i:'<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>'},
-  {c:"pinky", t:"Повторения по плану", p:"Слово возвращается через 1, 3, 7, 16 дней и дальше, пока не запомнится.", i:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'},
-  {c:"", t:"Подборки по тегам", p:"Один тег — одна подборка. Слово может входить в несколько.", i:'<path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="8.5" r="1.2"/>'}
-];
-const featStrip = () => `<div class="feats">${FEATS.map(f=>`<div class="feat ${f.c}"><span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${f.i}</svg></span><div><b>${f.t}</b><p>${f.p}</p></div></div>`).join("")}</div>`;
 function renderLearn(){
   const el=$("#v-learn"), cs=allCards();
   const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
   const dc=deckCards(), closed=dc.filter(closedLevel).length, nP=Math.min(S().batch, closed);
   const plan=learnPlan(false), gs=plan.g, todo=plan.list.length, n=Math.min(S().batch, todo);
-  if(gs.newTarget===0 && gs.revTarget===0 && !gs.d.closed){ const d=Store.stats.days[dayKey()] ||= emptyDay(); d.closed=true; Store.saveStats(); }   // задач на сегодня нет: день закрыт сам
+  if(cs.length && gs.newTarget===0 && gs.revTarget===0 && !gs.d.closed){ const d=Store.stats.days[dayKey()] ||= emptyDay(); d.closed=true; Store.saveStats(); }   // задач на сегодня нет: день закрыт сам
   const st=streakInfo();
   const studied=cs.filter(c=>c.box>0).length, longterm=cs.filter(c=>c.box>=4).length, dueAll=cs.filter(isDue).length, hard=cs.filter(c=>c.fails>0 || (c.lapses>0 && c.box<4)).length;
   const notStarted=cs.filter(c=>!c.box).length;
@@ -1412,7 +1405,8 @@ function renderLearn(){
     : `<div class="panel small muted" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between">Добавьте слову тег, например «работа», и его можно будет учить отдельной подборкой.<button class="pill-link" data-go="words">К словам</button></div>`);
   const ss=savedSess(), ssLeft=ss?ss.rounds.reduce((n,r)=>n+(r.queue?.length||0),0):0;
   const resumeBox = ss ? `<div class="resume"><div><b>Незавершённая тренировка</b><div class="small muted">${ss.kind==="practice"?"Тренировка":"Обучение"} · осталось шагов: ${ssLeft}</div></div><div class="row"><button class="btn primary" type="button" data-resume ${tipAttr("Продолжить с того места, где остановились")}>Продолжить</button><button class="btn" type="button" data-discard ${tipAttr("Удалить сохранённую тренировку. Прогресс слов не изменится.")}>Сбросить</button></div></div>` : "";
-  el.innerHTML = resumeBox + `
+  const howInvite = !cs.length ? `<section class="howinv"><div><span class="hero-kicker">Новичку</span><h2>Попробуйте за минуту</h2><p>Найдите слово, ответьте на три вопроса и увидите, когда Колода вернёт его на повторение. Регистрация не нужна.</p></div><button class="btn primary" type="button" data-howgo="how">Попробовать</button></section>` : "";
+  el.innerHTML = resumeBox + howInvite + `
   <section class="prog" aria-label="Ваш прогресс">
     <div class="prog-streak">
       <span class="hero-kicker">Серия${`<button class="tip tip-light" type="button" aria-label="Пояснение" data-tip="Сколько дней подряд вы закрывали цель дня. Один пропуск в неделю серию не прерывает. Полоски: последние 7 дней, справа сегодня. Тёмная — день закрыт, полупрозрачная — занимались, но цель не закрыли.">?</button>`}</span>
@@ -1460,9 +1454,10 @@ function renderLearn(){
     ${!cs.length?`<div class="panel stack" style="grid-column:1/-1"><div><b>Пока в колоде нет слов</b><div class="small muted">Добавьте своё слово или список, либо загрузите 8 готовых слов, чтобы посмотреть, как всё работает.</div></div><div class="row"><button class="btn primary" type="button" data-go="words">Добавить слово</button><button class="btn" type="button" id="demoBtn">8 слов для пробы</button></div></div>`:""}
     ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>
-  ${Object.keys(Store.stats.days||{}).length<5?`<div class="sec-head"><h2>Что умеет Колода</h2></div>${featStrip()}`:""}`;
+`;
   el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startPractice());
   el.querySelector("[data-resume]")?.addEventListener("click",()=>{ hideTip(); resumeSess(); });
+  el.querySelectorAll("[data-howgo]").forEach(b=>b.onclick=()=>{ how=howReset(); go(b.dataset.howgo); });
   el.querySelector("[data-discard]")?.addEventListener("click",()=>{ hideTip(); clearSavedSess(); renderLearn(); toast("Сохранённая тренировка удалена"); });
   el.querySelectorAll("[data-deck]").forEach(b=>b.onclick=()=>{ hideTip(); S().deck=b.dataset.deck; Store.saveSettings(); renderLearn(); });
   el.querySelectorAll("[data-gof]").forEach(b=>b.onclick=()=>{ hideTip(); filter=b.dataset.gof; tagFilter=""; $("#filters").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.f===filter)); go("words"); });
@@ -2444,19 +2439,155 @@ window.addEventListener("storage", e=>{
     toast("Данные обновлены из другой вкладки");
   },120);
 });
+
+/* ============ «Как это работает»: живой тур без регистрации ============ */
+const HOWFEATS=[
+  {c:"lime", t:"Перевод за секунду", p:"Введите слово на русском или английском: варианты перевода подберутся сами.", i:'<path d="M4 5h9M8.5 3v2M6 5c.6 3 3 6 6 7M12 5c-.6 3-3 6-6 7"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/>'},
+  {c:"", t:"Примеры и звук", p:"Транскрипция, живые примеры с переводом и озвучка в каждой карточке.", i:'<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>'},
+  {c:"pinky", t:"Повторения по плану", p:"Слово возвращается через 1, 3, 7, 16 дней и дальше, ровно когда оно начинает забываться.", i:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'},
+  {c:"", t:"Шесть видов заданий", p:"Знакомство, выбор перевода, пары, вставка в предложение, сборка из букв и ввод с клавиатуры.", i:'<rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/>'},
+  {c:"", t:"Подборки по тегам", p:"Один тег — одна подборка: работа, поездка, фильмы. Слово может входить в несколько.", i:'<path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="8.5" r="1.2"/>'},
+  {c:"lime", t:"Список за один раз", p:"Вставьте десятки слов, перевод и примеры подберутся сами. Что не разобралось, останется в поле.", i:'<path d="M4 6h16M4 12h16M4 18h10"/>'},
+  {c:"", t:"Цель дня и серия", p:"Спокойный план: сколько новых слов и повторений на сегодня. Один пропуск в неделю серию не рвёт.", i:'<path d="M5 20V11M12 20V4M19 20v-6"/>'},
+  {c:"pinky", t:"Работает без сети", p:"Сайт ставится на главный экран телефона и открывается без интернета.", i:'<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>'},
+  {c:"", t:"Ничего лишнего", p:"Без рекламы, счётчиков и аналитики. Данные только ваши: в браузере или в аккаунте, удалить можно в один клик.", i:'<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/>'}
+];
+const howPool = () => [...DEMO, ...FILLER].map(x=>({en:x.en, ru:x.ru}));
+const howReset = () => ({ card:null, loading:false, error:null, q:0, answered:null, miss:0, done:false, added:false, qs:null, typed:"", used:[] });
+let how=howReset();
+
+async function howLookup(text){
+  const lang=isCyr(text)?"ru":"en";
+  const demo=DEMO.find(d=>norm(d.en)===norm(text));
+  if(demo) return {...demo, examples:demo.examples.map(x=>({...x}))};
+  if(await getSample()){
+    const r=await askJSON(lookupPrompt(text,lang));
+    const sn=(r?.senses||[]).find(x=>x&&x.en&&x.ru); if(!sn) return null;
+    return {en:sn.en, ru:sn.ru, ipa:sn.ipa||"", pos:sn.pos||"", examples:(sn.examples||[]).filter(x=>x&&x.en).slice(0,2)};
+  }
+  if(lang==="en"){
+    const [tr,info]=await Promise.all([FREE.translate(text,"en","ru"), enrichInfo(text)]);
+    const v=FREE.variants(tr,text).slice(0,2); if(!v.length) return null;
+    return {en:text, ru:v.join(", "), ipa:info.ipa, pos:info.pos, audio:info.audio, examples:info.examples.slice(0,2).map(x=>({...x}))};
+  }
+  const tr=await FREE.translate(text,"ru","en"), v=FREE.variants(tr,text);
+  return v.length ? {en:v[0], ru:text, examples:[]} : null;
+}
+function howBuildQuiz(c){
+  const pool=howPool().filter(x=>norm(x.en)!==norm(c.en)), main=ruVariants(c.ru)[0]||c.ru;
+  const wrongRu=[], seen=new Set([norm(main)]);
+  for(const x of shuffle(pool)){ const v=ruVariants(x.ru)[0]; if(v && !seen.has(norm(v))){ seen.add(norm(v)); wrongRu.push(v); } if(wrongRu.length>=3) break; }
+  const q1={type:"choice", prompt:c.en, say:true, label:"Что значит это слово?", opts:shuffle([main,...wrongRu]), answer:main};
+  const cl=clozeFor(c); let q2;
+  if(cl){
+    const isTo=/^to\s/i.test(c.en), wrong=[];
+    for(const x of shuffle(pool)){ if(/^to\s/i.test(x.en)===isTo){ const w=x.en.replace(/^to\s+/i,""); if(!wrong.includes(w)) wrong.push(w); } if(wrong.length>=2) break; }
+    const shown=cl.x.en.slice(0,cl.m.index)+"_____"+cl.x.en.slice(cl.m.index+cl.m.text.length);
+    q2={type:"cloze", prompt:shown, hint:cl.x.ru, label:"Вставьте слово в предложение", opts:shuffle([cl.m.text,...wrong]), answer:cl.m.text};
+  } else {
+    const letters=c.en.replace(/^to\s+/i,"").replace(/\s+/g,"");
+    q2={type:"letters", prompt:main, label:"Соберите слово из букв", letters:shuffle(letters.split("")), answer:letters};
+  }
+  const q3={type:"typing", prompt:main, label:"Напишите по-английски", answer:c.en};
+  return [q1,q2,q3];
+}
+function howStart(card){ how={...howReset(), card, qs:howBuildQuiz(card)}; renderHow(); }
+async function howSearch(text){
+  text=text.trim(); if(!text) return $("#howIn")?.focus();
+  how={...howReset(), loading:true}; renderHow();
+  try{
+    const c=await howLookup(text);
+    if(!c){ how.loading=false; how.error="Словарь ничего не нашёл. Проверьте написание или выберите одно из готовых слов."; return renderHow(); }
+    howStart(c);
+  }catch(e){ how.loading=false; how.error=lookupErrorText(e).replace(/\s*(или )?введите перевод вручную.*$/i,"").replace(/\.?$/,".")+" Можно выбрать одно из готовых слов."; renderHow(); }
+}
+function howAnswer(ok, given){ how.answered={ok, given}; if(!ok) how.miss++; renderHow(); }
+function howNext(){ if(how.q>=how.qs.length-1) how.done=true; else how.q++; how.answered=null; how.typed=""; how.used=[]; renderHow(); }
+function howTimeline(){
+  // как в тренировке: без ошибок новое слово сразу получает 2-й уровень (повтор через 3 дня), с ошибкой остаётся на 1-м (завтра)
+  const from=how.miss?1:2, steps=INTERVALS.slice(from); let total=0;
+  return steps.map(d=>{ total+=d; return {d, date:new Date(Date.now()+total*DAY).toLocaleDateString("ru-RU",{day:"numeric",month:"short"})}; });
+}
+function renderHow(){
+  const el=$("#v-how"), c=how.card;
+  const lock=t=>`<div class="howlock">${t}</div>`;
+  const chips=DEMO.slice(0,4).map(d=>`<button type="button" class="chip pick" data-hp="${esc(d.en)}">${esc(d.en)}</button>`).join("");
+  let s1=`<form id="howForm" class="add-head"><input class="input" id="howIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Любое слово: to cope with, справляться…" aria-label="Слово"><button class="btn primary" type="submit">Показать</button></form>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><span class="small muted">Или возьмите готовое:</span>${chips}</div>`;
+  if(how.loading) s1+=`<div class="senses"><div class="skeleton"></div><div class="skeleton"></div></div>`;
+  if(how.error) s1+=`<div class="feedback no small">${esc(how.error)}</div>`;
+  if(c) s1+=`<div class="hword"><div class="row" style="justify-content:space-between;flex-wrap:nowrap"><div><b class="hw-en">${esc(c.en)}</b> ${c.pos?`<span class="chip">${esc(c.pos)}</span>`:""}<div class="muted small">${esc(c.ipa||"")}</div></div>${sayBtn(c.en,"en",false)}</div>
+      <div class="hw-ru">${esc(c.ru)}</div>
+      ${(c.examples||[]).slice(0,2).map(x=>`<div class="hw-ex"><span>${esc(x.en)}</span>${x.ru?`<span class="muted small">${esc(x.ru)}</span>`:""}</div>`).join("")}</div>`;
+  let s2;
+  if(!c) s2=lock("Сначала выберите слово в первом шаге.");
+  else if(how.done) s2=`<div class="feedback ok small">${how.miss?`Готово. Ошибок: ${how.miss}. Так бывает: слово вернётся скорее.`:"Без единой ошибки. Отлично!"}</div>`;
+  else {
+    const q=how.qs[how.q], a=how.answered; let body="";
+    if(q.type==="choice"||q.type==="cloze"){
+      body=`<div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:${q.type==="choice"?26:19}px;font-weight:600">${esc(q.prompt)}</div>${q.say?sayBtn(q.prompt,"en"):""}</div>${q.hint?`<div class="muted small" style="margin-top:6px">${esc(q.hint)}</div>`:""}</div>
+        <div class="opts">${q.opts.map((o,i)=>`<button class="opt${a?(o===q.answer?" right":(a.given===o?" wrong":"")):""}" data-ho="${i}" ${a?"disabled":""}><span>${esc(o)}</span></button>`).join("")}</div>`;
+    } else if(q.type==="letters"){
+      body=`<div class="flash"><div class="trans" style="font-size:24px;font-weight:600">${esc(q.prompt)}</div></div>
+        <div class="howletters" aria-label="Собранное слово">${how.typed?how.typed.split("").map(l=>`<span class="lt on">${esc(l)}</span>`).join(""):`<span class="muted small">Нажимайте буквы по порядку</span>`}</div>
+        <div class="howletters">${q.letters.map((l,i)=>`<button type="button" class="lt" data-hl="${i}" ${a||how.used.includes(i)?"disabled":""}>${esc(l)}</button>`).join("")}<button type="button" class="lt ghost" data-hlback="1" ${a?"disabled":""} aria-label="Стереть">⌫</button></div>`;
+    } else {
+      body=`<div class="flash"><div class="trans" style="font-size:24px;font-weight:600">${esc(q.prompt)}</div></div>
+        <form id="howTy" class="add-head"><input class="input" id="howTyIn" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="по-английски" ${a?"disabled":""} value="${esc(how.typed||"")}"><button class="btn primary" type="submit" ${a?"disabled":""}>Проверить</button></form>`;
+    }
+    const fb=a?`<div class="feedback ${a.ok?"ok":"no"} small" role="status">${a.ok?"Верно!":`Не совсем. Правильно: <b>${esc(q.answer)}</b>`}</div><div class="row" style="justify-content:flex-end"><button class="btn primary" id="howNext" type="button">${how.q>=how.qs.length-1?"Готово":"Дальше"}</button></div>`:"";
+    s2=`<div class="howdots" aria-label="Вопрос ${how.q+1} из ${how.qs.length}">${how.qs.map((_,i)=>`<i class="${i<how.q?"on":i===how.q?"cur":""}"></i>`).join("")}</div><div class="label">${esc(q.label)}</div>${body}${fb}`;
+  }
+  let s3;
+  if(!how.done) s3=lock("Появится после трёх вопросов.");
+  else {
+    const tl=howTimeline(), exists=allCards().some(x=>norm(x.en)===norm(c.en));
+    s3=`<p class="small" style="margin:0">${how.miss?"Была ошибка, поэтому":"Всё без ошибок, значит"} «${esc(c.en)}» вернётся на повторение <b>${how.miss?"завтра":"через 3 дня"}</b>. Дальше паузы растут, пока слово не запомнится надолго.</p>
+      <div class="tline">${tl.map(t=>`<div class="tl"><b>+${t.d} ${plural(t.d,"день","дня","дней")}</b><span>${t.date}</span></div>`).join("")}</div>
+      <div class="row" style="gap:10px;flex-wrap:wrap">${how.added||exists?`<span class="chip">Слово в вашей колоде</span><button class="btn primary" type="button" data-howgo="learn">Перейти к обучению</button>`:`<button class="btn primary" type="button" id="howAdd">Добавить «${esc(c.en)}» в мою колоду</button><button class="btn" type="button" data-howgo="words">Ввести свои слова</button>`}</div>`;
+  }
+  const step=(n,title,sub,ok,h)=>`<section class="panel stack howstep${ok?" ok":""}"><div class="howhead"><span class="hnum">${ok?"✓":n}</span><div><h3>${title}</h3><p class="small muted">${sub}</p></div></div>${h}</section>`;
+  el.innerHTML=`<section class="welcome"><div class="welcome-in"><span class="hero-kicker">Как это работает</span>
+      <h1 class="welcome-title">Попробуйте <span>за минуту</span></h1>
+      <p>Найдите слово, ответьте на три вопроса и посмотрите, когда Колода вернёт его на повторение. Регистрация не нужна, ничего не сохранится, пока вы сами не нажмёте «Добавить».</p></div></section>
+    ${step(1,"Найдите слово","Перевод, транскрипция, примеры и звук подберутся сами.",!!c,s1)}
+    ${step(2,"Проверьте себя","Так выглядят задания в тренировке: от подсказки к самостоятельному ответу.",how.done,s2)}
+    ${step(3,"Узнайте, когда слово вернётся","Это и есть интервальные повторения: слово приходит перед тем, как вы его забудете.",how.added,s3)}
+    <div class="sec-head"><h2>Что ещё умеет Колода</h2></div>
+    <div class="feats">${HOWFEATS.map(f=>`<div class="feat ${f.c}"><span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${f.i}</svg></span><div><b>${f.t}</b><p>${f.p}</p></div></div>`).join("")}</div>
+    <div class="ftile nudge"><div><h3>Готовы начать?</h3><p>Добавьте первые слова, и уже сегодня Колода составит план повторений.</p></div><div class="row"><button class="btn primary" data-howgo="words">Добавить слова</button><button class="btn" data-howgo="learn">На главную</button></div></div>`;
+  bindHow(el);
+}
+function bindHow(el){
+  const f=el.querySelector("#howForm"); if(f) f.onsubmit=e=>{ e.preventDefault(); howSearch($("#howIn").value); };
+  el.querySelectorAll("[data-hp]").forEach(b=>b.onclick=()=>howSearch(b.dataset.hp));
+  el.querySelectorAll("[data-ho]").forEach(b=>b.onclick=()=>{ const q=how.qs[how.q], v=q.opts[+b.dataset.ho]; howAnswer(norm(v)===norm(q.answer), v); });
+  el.querySelectorAll("[data-hl]").forEach(b=>b.onclick=()=>{
+    const q=how.qs[how.q]; how.used.push(+b.dataset.hl); how.typed+=q.letters[+b.dataset.hl];
+    if(how.typed.length>=q.answer.length) howAnswer(norm(how.typed)===norm(q.answer), how.typed); else renderHow();
+  });
+  el.querySelector("[data-hlback]")?.addEventListener("click",()=>{ if(how.typed){ how.typed=how.typed.slice(0,-1); how.used.pop(); renderHow(); } });
+  const ty=el.querySelector("#howTy"); if(ty){ ty.onsubmit=e=>{ e.preventDefault(); const v=$("#howTyIn").value.trim(); if(!v) return; how.typed=v; howAnswer(!!answerMatch(v,how.qs[how.q].answer), v); }; if(!how.answered) setTimeout(()=>$("#howTyIn")?.focus(),30); }
+  el.querySelector("#howNext")?.addEventListener("click",howNext);
+  el.querySelector("#howAdd")?.addEventListener("click",()=>{ const c=newCard({...how.card, examples:(how.card.examples||[]).map(x=>({...x}))}); Store.saveCard(c); how.added=true; toast("Слово добавлено в колоду"); renderHow(); });
+  el.querySelectorAll("[data-howgo]").forEach(b=>b.onclick=()=>{ go(b.dataset.howgo); if(b.dataset.howgo==="words") setTimeout(()=>addInput.focus(),50); });
+}
+
 /* ============ routing ============ */
 let view="learn";
-const VIEWS=["learn","words","stats","prefs"];
+const VIEWS=["learn","words","stats","prefs","how"];
 function go(v){
   if(!VIEWS.includes(v)) v="learn"; view=v;
   VIEWS.forEach(x=>$("#v-"+x).hidden = x!==v);
   $("#tabs").querySelectorAll("button").forEach(b=>b.setAttribute("aria-current", b.dataset.view===v?"page":"false"));
+  $("#howLink").setAttribute("aria-current", v==="how"?"page":"false");
   try{ history.replaceState(null,"","#"+v); }catch{}
   renderView(); window.scrollTo(0,0);
 }
-function renderView(){ ({learn:renderLearn, words:renderList, stats:renderStats, prefs:renderPrefs})[view](); }
+function renderView(){ ({learn:renderLearn, words:renderList, stats:renderStats, prefs:renderPrefs, how:renderHow})[view](); }
 function renderAll(){ knownCache=null; renderView(); setSync(); }
 $("#toLearn").onclick=()=>go("learn");
+$("#howLink").onclick=()=>{ if(view!=="how") how=howReset(); go("how"); };
 $("#tabs").onclick=e=>{ const b=e.target.closest("button"); if(b) go(b.dataset.view); };
 
 /* ============ boot ============ */

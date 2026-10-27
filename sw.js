@@ -1,6 +1,6 @@
 /* Колода: офлайн-режим. Сайт открывается без сети из кэша; когда сеть есть, всегда берётся свежая версия.
    Данные (слова) сюда не попадают: они лежат в браузере или в облаке аккаунта. */
-const CACHE = "koloda-shell-v1";
+const CACHE = "koloda-shell-v2";
 const SHELL = ["./", "index.html", "app.css", "app.js", "config.js", "manifest.webmanifest",
   "vendor/supabase-2.117.3.js", "icons/icon-192.png",
   "fonts/montserrat-cyrillic-500-normal.woff2", "fonts/montserrat-cyrillic-600-normal.woff2", "fonts/montserrat-cyrillic-700-normal.woff2", "fonts/montserrat-cyrillic-800-normal.woff2",

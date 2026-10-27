@@ -24,7 +24,7 @@
     <button data-view="stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>Прогресс</button>
     <button data-view="prefs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Настройки</button>
   </nav>
-    <div class="acct-wrap"><div class="sync" id="sync">этот браузер</div><span id="acct"></span></div>
+    <div class="acct-wrap"><button class="howlink" id="howLink" type="button" aria-label="Как это работает"><span class="hl-q" aria-hidden="true">?</span><span class="hl-t">Как это работает</span></button><div class="sync" id="sync">этот браузер</div><span id="acct"></span></div>
   </header>
 
   <main>
@@ -82,6 +82,7 @@
     </section>
     <section id="v-stats" class="stack" hidden></section>
     <section id="v-prefs" class="stack" hidden></section>
+    <section id="v-how" class="stack" hidden></section>
   </main>
 </div>
 
