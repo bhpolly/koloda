@@ -2527,3 +2527,34 @@ Store.connectClaude().then(()=>{ if(!sess) renderAll(); else setSync(); initAuth
 try{ navigator.storage?.persist?.().catch(()=>{}); }catch{}
 if("serviceWorker" in navigator && location.protocol==="https:") window.addEventListener("load",()=>{ navigator.serviceWorker.register("sw.js").catch(()=>{}); });   // офлайн-режим
 document.addEventListener("click", e=>{ if(e.target.closest("#footPriv")){ e.preventDefault(); openPrivacy(); } });
+
+/* ——— напоминание: добавить сайт на домашний экран (только телефоны) ——— */
+(function(){
+  const KEY_SNOOZE="koloda_a2hs_snooze", KEY_DONE="koloda_a2hs_done", EVERY=6*3600*1000;
+  let deferred=null;
+  window.addEventListener("beforeinstallprompt",e=>{ e.preventDefault(); deferred=e; });
+  window.addEventListener("appinstalled",()=>{ try{ localStorage.setItem(KEY_DONE,"1"); }catch{} hideA2hs(); });
+  const ua=navigator.userAgent||"";
+  const isIOS=/iPhone|iPad|iPod/.test(ua)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+  const isMobile=isIOS||/Android.+Mobile|Mobile.+Android|Android/.test(ua);
+  const standalone=()=>window.matchMedia("(display-mode: standalone)").matches||navigator.standalone===true;
+  const get=k=>{ try{ return localStorage.getItem(k); }catch{ return null; } };
+  const set=(k,v)=>{ try{ localStorage.setItem(k,v); }catch{} };
+  function hideA2hs(){ document.getElementById("a2hs")?.remove(); }
+  function due(){ if(!isMobile||standalone()||get(KEY_DONE)) return false; const t=+get(KEY_SNOOZE)||0; return Date.now()-t>=EVERY; }
+  function show(){
+    if(!due()||document.getElementById("a2hs")||sess||tour||!$("#modal").hidden) return;
+    const steps = isIOS
+      ? 'Нажмите «Поделиться» <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 15V3M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg> в Safari, затем «На экран Домой».'
+      : "Откройте меню браузера <b>⋮</b> и выберите «Добавить на главный экран».";
+    const d=document.createElement("div"); d.id="a2hs"; d.className="a2hs"; d.setAttribute("role","dialog"); d.setAttribute("aria-label","Добавить Колоду на домашний экран");
+    d.innerHTML=`<img src="icons/icon-192.png" alt="" width="48" height="48"><div class="a2t"><b>Колода на домашнем экране</b><span>${deferred?"Откроется как приложение, без адресной строки.":steps}</span></div>
+      <div class="a2b">${deferred?'<button class="btn primary" type="button" data-a="add">Добавить</button>':'<button class="btn primary" type="button" data-a="done">Готово</button>'}<button class="btn ghost" type="button" data-a="later">Позже</button></div>`;
+    d.addEventListener("click",async e=>{ const a=e.target.closest("[data-a]")?.dataset.a; if(!a) return;
+      if(a==="add"&&deferred){ try{ deferred.prompt(); const r=await deferred.userChoice; if(r.outcome==="accepted") set(KEY_DONE,"1"); else set(KEY_SNOOZE,String(Date.now())); }catch{} deferred=null; }
+      else if(a==="done") set(KEY_DONE,"1"); else set(KEY_SNOOZE,String(Date.now()));
+      hideA2hs(); });
+    document.body.append(d);
+  }
+  if(isMobile){ setTimeout(()=>{ show(); setInterval(show,60000); },25000); }
+})();

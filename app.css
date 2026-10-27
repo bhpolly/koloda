@@ -1189,3 +1189,12 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 
 /* волна в карточках: мягкий край вместо среза */
 .prog::before,.welcome::before{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 38%);mask-image:linear-gradient(to right,transparent 0,#000 38%)}
+
+/* напоминание про домашний экран */
+.a2hs{position:fixed;left:12px;right:12px;bottom:calc(88px + env(safe-area-inset-bottom,0px));z-index:40;background:#fff;color:var(--ink,#1A1A1A);border:1.5px solid #1A1A1A;border-radius:22px;padding:12px;display:grid;grid-template-columns:48px 1fr;gap:6px 12px;align-items:center;box-shadow:0 10px 0 -4px rgba(26,26,26,.12);animation:rise .35s var(--ease)}
+.a2hs img{width:48px;height:48px;border-radius:12px;grid-row:1}
+.a2hs .a2t{display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:1.35}
+.a2hs .a2t b{font-size:15px}.a2hs .a2t span{color:var(--muted,#6b6257)}
+.a2hs .a2b{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
+:root[data-theme="dark"] .a2hs{background:#2a2825;color:#F5EDE0}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .a2hs{background:#2a2825;color:#F5EDE0}}
