@@ -36,7 +36,7 @@ function showStoreWarn(){
 try{ localStorage.setItem("koloda_probe","1"); localStorage.removeItem("koloda_probe"); }catch{ storageBad=true; }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, deck:"", goal:10, revCap:40, level:"B1", modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, planSeen:0, deck:"", goal:10, revCap:40, level:"B1", modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -60,7 +60,7 @@ function sanitizeSettings(s){
   if([3,5,10,15,20,30,50].includes(+s.goal)) o.goal=+s.goal;
   if([15,25,40,60,100].includes(+s.revCap)) o.revCap=+s.revCap;
   if(["A2","B1","B2","C1"].includes(s.level)) o.level=s.level;
-  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.deck=str(s.deck,30);
+  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.planSeen=Math.max(0,Math.min(9,+s.planSeen||0)); o.deck=str(s.deck,30);
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -803,7 +803,8 @@ async function saveDraft(){
   }
   const c=newCard({...d, tags}); Store.saveCard(c);
   addState=null; addInput.value=""; $("#langBadge").hidden=true; renderAdd(); renderList();
-  toast("Карточка «"+c.en+"» добавлена"); addInput.focus();
+  const waiting=allCards().filter(x=>!x.box).length;
+  toast(`«${c.en}» добавлено. Новых слов ждёт обучения: ${waiting}`, {label:"Учить сейчас", fn:()=>{ go("learn"); startLearn(); }}); addInput.focus();
 }
 
 /* bulk import */
@@ -952,6 +953,7 @@ function renderImportReport(addedNow, stopped, retry=false, gain=null){
   const missing=cs.filter(c=>!c.ipa || !c.examples?.length).length;
   $("#impResult").innerHTML=`<div class="feedback ${cls} small result"><button class="x" type="button" id="impClose" aria-label="Закрыть">×</button>${esc(msg)}${missing && N?`<div class="row" style="margin-top:8px"><button class="btn" id="impRetry" type="button" data-tip="Повторит поиск только для слов без транскрипции или примеров. Уже найденное и ваши правки не изменятся.">Найти недостающее (${missing})</button></div><div class="muted" style="margin-top:6px">Для ${missing} ${plural(missing,"слова","слов","слов")} не нашлись транскрипция или примеры, например, когда такого слова нет в словарях или сервис не ответил. Кнопка попробует найти их ещё раз.</div>`:""}${reportSkipped(lastImport.skipped)}</div>`;
   const rb=$("#impRetry"); if(rb) rb.onclick=retryImport;
+  if(!retry && addedNow){ const row=document.createElement("div"); row.className="row"; row.style.marginTop="8px"; row.innerHTML=`<button class="btn primary" id="impLearn" type="button">Учить сейчас</button>`; $("#impResult .result").append(row); $("#impLearn").onclick=()=>{ go("learn"); startLearn(); }; }
   $("#impClose").onclick=()=>{ $("#impResult").innerHTML=""; };
 }
 async function retryImport(){
@@ -1511,23 +1513,50 @@ function assignTasks(c, noMatch=false){
   return chosen;
 }
 const roundKey = r => r.type==="choice" ? (r.dir==="rev"?"cr":"cf") : ({match:"ma",cloze:"cl",letters:"le",typing:"ty"})[r.type];
-function buildSession(kind, list){
-  knownCache=null;
-  const ids=list.map(c=>c.id), bk={cf:[],ma:[],cr:[],cl:[],le:[],ty:[]};
-  ids.forEach(i=>runSeen.add(i));
+/* раунды одной «части»: знакомство только для новых слов, дальше все форматы. Новые слова идут порциями по 4–6 (знакомство → сразу проверка),
+   а не пачкой из 10–25 карточек подряд: память держится лучше, когда за показом сразу идёт вспоминание */
+function waveRounds(list, w){
+  const bk={cf:[],ma:[],cr:[],cl:[],le:[],ty:[]};
   list.forEach(c=>assignTasks(c).forEach(t=>bk[t].push(c.id)));
   if(bk.ma.length===1){ const id=bk.ma.pop(); const alt=["cr","cf","ty"].find(t=>!bk[t].includes(id) && (t==="ty"||modesOn().choice)); if(alt) bk[alt].push(id); }
-  const rounds=[{type:"intro", queue:list.filter(c=>!c.box).map(c=>c.id)}];   // знакомство только для новых слов: повторения идут сразу в упражнения
+  const rounds=[{type:"intro", queue:list.filter(c=>!c.box).map(c=>c.id)}];
   rounds.push({type:"choice", dir:"fwd", queue:shuffle(bk.cf)});
   { const sh=shuffle(bk.ma), ch=[]; for(let i=0;i<sh.length;i+=5) ch.push(sh.slice(i,i+5)); if(ch.length>1 && ch[ch.length-1].length<2){ ch[ch.length-2].push(...ch.pop()); } rounds.push({type:"match", queue:ch}); }
   rounds.push({type:"choice", dir:"rev", queue:shuffle(bk.cr)});
   rounds.push({type:"cloze", queue:shuffle(bk.cl)});
   rounds.push({type:"letters", queue:shuffle(bk.le)});
   rounds.push({type:"typing", queue:shuffle(bk.ty)});
+  rounds.forEach(r=>r.w=w);
+  return rounds;
+}
+function splitWaves(list){
+  const n=list.length, k=n<=7?1:Math.ceil(n/6), out=[]; let i=0;
+  for(let j=0;j<k;j++){ const size=Math.ceil((n-i)/(k-j)); out.push(list.slice(i,i+size)); i+=size; }
+  return out;
+}
+const wavesCount = () => 1+Math.max(0,...sess.rounds.map(r=>r.w||0));
+function buildSession(kind, list){
+  knownCache=null;
+  const ids=list.map(c=>c.id); ids.forEach(i=>runSeen.add(i));
+  const rounds=splitWaves(list).flatMap((g,w)=>waveRounds(g,w));
   sess={kind, ids, rounds, r:0, done:0, mistakes:Object.fromEntries(ids.map(i=>[i,0])), skipped:new Set(), answers:0, right:0, busy:false};
   sess.total = rounds.reduce((n,r)=>n+r.queue.length,0);
   $("#sess").hidden=false; document.body.style.overflow="hidden"; if(!Nav.sess && Nav.push()) Nav.sess=true;
-  next();
+  if((S().planSeen||0)<2){ S().planSeen=(S().planSeen||0)+1; Store.saveSettings(); showPlan(list); } else next();
+}
+/* первые занятия: короткий план перед стартом, чтобы было понятно, что будет и сколько это займёт */
+function showPlan(list){
+  updateBar(); $("#sessMore").hidden=true; sess.cur=null;
+  const nNew=list.filter(c=>!c.box).length, nRev=list.length-nNew, k=wavesCount(), mins=Math.max(1,Math.round(sess.total*8/60));
+  const bits=[nNew?`${nNew} ${plural(nNew,"новое слово","новых слова","новых слов")}`:"", nRev?`${nRev} на повторении`:""].filter(Boolean).join(" и ");
+  const kinds=[nNew?["Знакомство","смотрите слово, перевод и примеры"]:null, ["Выбор перевода","узнаёте слово среди вариантов"], ["Пары","соединяете слово и перевод"], ["Предложения и буквы","вставляете слово, собираете из букв"], ["Ввод","пишете слово сами"]].filter(Boolean);
+  body().innerHTML=`<div class="flash plan" style="text-align:left;align-items:stretch;gap:10px">
+    <div class="label" style="text-align:center">План занятия</div>
+    <div style="text-align:center"><div class="bignum" style="font-size:44px">${list.length}</div><div class="muted">${bits} · примерно ${mins} ${plural(mins,"минута","минуты","минут")}${k>1?` · ${k} ${plural(k,"часть","части","частей")}`:""}</div></div>
+    <ol class="plan-list">${kinds.map(([t,d])=>`<li><b>${t}</b><span class="muted small">${d}</span></li>`).join("")}</ol>
+    <p class="small muted" style="margin:0">${k>1?"Слова идут небольшими порциями: после знакомства сразу проверка, так запоминается лучше. ":""}Ошибиться не страшно: слово вернётся в конце, и это часть обучения. Выйти можно в любой момент, пройденные слова сохранятся.</p></div>
+  <div class="sess-foot"><button class="btn primary" id="planGo" type="button">Поехали</button></div>`;
+  $("#planGo").onclick=()=>next(); $("#planGo").focus();
 }
 
 /* ---- сохранение тренировки: можно закрыть вкладку и продолжить ---- */
@@ -1548,7 +1577,7 @@ function savedSess(){
 function resumeSess(){
   const s=savedSess(); if(!s) return;
   const alive=new Set(s.ids.filter(id=>Store.cards.has(id)));
-  const rounds=s.rounds.filter(r=>r&&["intro","choice","match","cloze","letters","typing"].includes(r.type)&&Array.isArray(r.queue)).map(r=>({type:r.type, dir:r.dir, queue: r.type==="match" ? r.queue.map(g=>(Array.isArray(g)?g:[]).filter(x=>alive.has(x))).filter(g=>g.length>=2) : r.queue.filter(x=>typeof x==="string"&&alive.has(x))}));
+  const rounds=s.rounds.filter(r=>r&&["intro","choice","match","cloze","letters","typing"].includes(r.type)&&Array.isArray(r.queue)).map(r=>({type:r.type, dir:r.dir, w:+r.w||0, queue: r.type==="match" ? r.queue.map(g=>(Array.isArray(g)?g:[]).filter(x=>alive.has(x))).filter(g=>g.length>=2) : r.queue.filter(x=>typeof x==="string"&&alive.has(x))}));
   sess={kind:s.kind, ids:[...alive], rounds, r:Math.min(+s.r||0, rounds.length), done:+s.done||0, mistakes:Object.fromEntries([...alive].map(id=>[id,+s.mistakes?.[id]||0])), skipped:new Set((s.skipped||[]).filter(id=>alive.has(id))), answers:+s.answers||0, right:+s.right||0, busy:false};
   sess.total=sess.done+rounds.reduce((n,r)=>n+r.queue.length,0);
   alive.forEach(id=>runSeen.add(id));
@@ -1558,7 +1587,7 @@ function resumeSess(){
 function cardOf(id){ return Store.cards.get(id); }
 function front(c){ return S().first==="en" ? {t:c.en, l:"en"} : {t:c.ru, l:"ru"}; }
 function back(c){ return S().first==="en" ? {t:c.ru, l:"ru"} : {t:c.en, l:"en"}; }
-function updateBar(){ const p=sess.total?Math.round(sess.done/sess.total*100):0; sess.maxP=Math.max(sess.maxP||0,p); $("#pbar").style.width=sess.maxP+"%"; $("#sessCount").textContent=Math.min(sess.done,sess.total)+"/"+sess.total; }
+function updateBar(){ const p=sess.total?Math.round(sess.done/sess.total*100):0; sess.maxP=Math.max(sess.maxP||0,p); $("#pbar").style.width=sess.maxP+"%"; const nd=sess.finished?sess.ids.length:doneIdsNow().done.length; $("#sessCount").textContent=nd+" из "+sess.ids.length+" "+plural(sess.ids.length,"слова","слов","слов"); $("#sessCount").title="Слово считается пройденным, когда выполнены все его задания"; }
 function next(){
   updateBar();
   while(sess.r<sess.rounds.length && !sess.rounds[sess.r].queue.length) sess.r++;
@@ -1579,7 +1608,7 @@ function done(ok, id, requeue=true){
   next();
 }
 const MODE = {intro:"Знакомство", choice:"Выберите перевод", match:"Соедините пары", cloze:"Вставьте пропущенное", letters:"Соберите слово из букв", typing:"Напишите по-английски"};
-function head(type, extra=""){ return `<div class="mode-tag"><span class="label">${MODE[type]}</span>${extra}</div>`; }
+function head(type, extra=""){ const k=sess?wavesCount():1, w=(sess?.rounds[sess.r]?.w||0)+1; return `<div class="mode-tag"><span class="label">${MODE[type]}</span>${extra}${k>1?`<span class="chip">часть ${w} из ${k}</span>`:""}</div>`; }
 const SRC_NAME={tat:"Tatoeba", wik:"Викисловарь", dict:"словарь", ctx:"из вашего примера"};
 const SRC_TIP={tat:"Предложение из Tatoeba: его написали и проверили люди.", wik:"Пример из Викисловаря.", dict:"Пример из словаря.", ctx:"Предложение из примера, на который вы нажали."};
 function srcTag(x, onlyWarn=false){
@@ -1635,11 +1664,12 @@ function stepIntro(round, id){
     sess.skipped.add(id);
     for(const r of sess.rounds){ if(r.type==="intro") continue; if(r.type==="match"){ r.queue=r.queue.map(g=>g.filter(x=>x!==id)).filter(g=>g.length>=2); } else r.queue=r.queue.filter(x=>x!==id); }
     // на место слова, которое пользователь уже знает, берём следующее из подборки
-    const rep=pickPool(sess.kind).find(x=>!sess.ids.includes(x.id));
+    const rep=pickPool(sess.kind).find(x=>!sess.ids.includes(x.id)), curW=round.w||0;
     if(rep){
       runSeen.add(rep.id); sess.ids.push(rep.id); sess.mistakes[rep.id]=0;
       const tasks=assignTasks(rep,true);
       for(const r of sess.rounds){
+        if((r.w||0)!==curW) continue;      // замена садится в ту же часть, где пользователь сейчас
         if(r.type==="intro"){ if(!rep.box) r.queue.push(rep.id); }
         else if(r.type!=="match" && tasks.includes(roundKey(r))) r.queue.splice(Math.floor(Math.random()*(r.queue.length+1)),0,rep.id);
       }
@@ -1903,7 +1933,7 @@ function finish(){
     } else if(m===1){
       // одна ошибка за тренировку: считаем промахом. Новое слово получает 1-й уровень, у повторяемого уровень сохраняется
       if(wasNew) c.box=1;
-      c.due=schedDue(c.box,load); c.reps++; ok=true; note="одна ошибка: уровень не снижен";
+      c.due=schedDue(c.box,load); c.reps++; ok=true; note=wasNew?"одна ошибка: повторим скорее":"одна ошибка: уровень не снижен";
       wasNew?learnedN++:reviewedN++;
     } else {
       // неудача = две и больше ошибок за тренировку: слово не освоено, считается один раз
@@ -1930,6 +1960,7 @@ function finish(){
   const sub = practice ? "Прогресс слов не изменился: они вернутся на повторение в свой срок." : `Изучено на текущем уровне: ${okN} из ${rows.length}`;
   body().innerHTML = `<div class="flash" style="gap:6px"><div class="label">${title}</div>
     <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div><div class="small muted">${sub}</div>${practice?"":`<div class="small" style="margin-top:6px"><b>Цель дня:</b> новые ${gs.newDone}/${gs.newTarget} · повторения ${gs.revDone}/${gs.revTarget}${justClosed?` · <b>день закрыт!</b> Серия: ${streakInfo().n} ${plural(streakInfo().n,"день","дня","дней")}`:gs.closed?" · день закрыт":""}</div>`}</div>
+    ${(()=>{ if(practice) return ""; const t0=startOfDay()+DAY, all=allCards().filter(c=>c.box>0), tom=all.filter(c=>c.due>=t0 && c.due<t0+DAY).length, three=all.filter(c=>c.due>=t0 && c.due<t0+3*DAY).length; return `<div class="small muted" style="text-align:center">Что дальше: ${tom?`завтра вернётся ${tom} ${plural(tom,"слово","слова","слов")}`:"завтра повторений нет"}${three>tom?`, а в ближайшие три дня всего ${three}`:""}. Приходите, когда придёт срок: так слова запоминаются надолго.</div>`; })()}
     <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.ok?"ok":"no"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${practice?dueLabel(r.c):r.ok?dueLabel(r.c)+(r.note?" · "+r.note:""):r.note}</span></div>`).join("")}</div>
     <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 180 дней).">Считать выученными (${clean})</button>`:""}${more?`<button class="btn primary" id="more">${practice?"Тренировать далее":"Изучать далее"}</button>`:""}<button class="btn" id="fin">Закончить</button></div>`;
   $("#fin").onclick=closeSess;

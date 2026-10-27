@@ -538,3 +538,7 @@ details.imp[open] summary::after{content:"−"}
 .howinv{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;border-radius:28px;padding:22px;background:var(--accent);color:var(--accent-ink)}
 .howinv h2{font-family:var(--f-display);font-size:26px;font-weight:800;margin:4px 0}.howinv p{margin:0;max-width:52ch;font-size:14px}
 .howinv .hero-kicker{color:inherit;opacity:.7}.howinv .btn.primary{background:var(--ink);color:var(--bg)}
+
+.plan-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:8px;counter-reset:p}
+.plan-list li{display:flex;flex-direction:column;gap:1px;padding:10px 14px 10px 46px;border-radius:14px;background:var(--bg);position:relative;counter-increment:p}
+.plan-list li::before{content:counter(p);position:absolute;left:12px;top:50%;transform:translateY(-50%);width:24px;height:24px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font-weight:800;font-size:12px}
