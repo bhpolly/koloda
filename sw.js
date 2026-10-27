@@ -1,8 +1,11 @@
 /* Колода: офлайн-режим. Сайт открывается без сети из кэша; когда сеть есть, всегда берётся свежая версия.
    Данные (слова) сюда не попадают: они лежат в браузере или в облаке аккаунта. */
-const CACHE = "koloda-shell-v2";
+const CACHE = "koloda-shell-v3";
 const SHELL = ["./", "index.html", "app.css", "app.js", "config.js", "manifest.webmanifest",
   "vendor/supabase-2.117.3.js", "icons/icon-192.png",
+  "fonts/oswald-cyrillic-600-normal.woff2", "fonts/oswald-cyrillic-700-normal.woff2", "fonts/oswald-latin-600-normal.woff2", "fonts/oswald-latin-700-normal.woff2",
+  "fonts/playfair-display-cyrillic-700-italic.woff2", "fonts/playfair-display-latin-700-italic.woff2",
+  "art/blob-green.svg", "art/blob-pink-soft.svg", "art/burst-green.svg", "art/cards.svg", "art/flower.svg", "art/flower-green.svg", "art/flower-white.svg", "art/mascot.svg", "art/sparkle.svg", "art/squiggle.svg",
   "fonts/montserrat-cyrillic-500-normal.woff2", "fonts/montserrat-cyrillic-600-normal.woff2", "fonts/montserrat-cyrillic-700-normal.woff2", "fonts/montserrat-cyrillic-800-normal.woff2",
   "fonts/montserrat-latin-500-normal.woff2", "fonts/montserrat-latin-600-normal.woff2", "fonts/montserrat-latin-700-normal.woff2", "fonts/montserrat-latin-800-normal.woff2"];
 
