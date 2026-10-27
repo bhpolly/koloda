@@ -18,14 +18,13 @@
 <div class="marq" aria-hidden="true"><div class="marq-t"><span>слова надолго</span><span>перевод за секунду</span><span>интервальные повторения</span><span>звук и примеры</span><span>без рекламы</span><span>работает без сети</span><span>слова надолго</span><span>перевод за секунду</span><span>интервальные повторения</span><span>звук и примеры</span><span>без рекламы</span><span>работает без сети</span><span>слова надолго</span><span>перевод за секунду</span><span>интервальные повторения</span><span>звук и примеры</span><span>без рекламы</span><span>работает без сети</span><span>слова надолго</span><span>перевод за секунду</span><span>интервальные повторения</span><span>звук и примеры</span><span>без рекламы</span><span>работает без сети</span></div></div>
 <div class="wrap">
   <header class="top">
-    <div class="brand"><span class="logo">Колода</span></div>
+    <div class="brand"><span class="logo">Колода</span><button class="howlink" id="howLink" type="button" aria-label="Как это работает" data-tip="Как это работает"><span class="hl-q" aria-hidden="true">?</span></button></div>
     <nav class="tabs" id="tabs" aria-label="Разделы">
     <button data-view="learn" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/></svg>Учить</button>
     <button data-view="words"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Слова</button>
     <button data-view="stats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>Прогресс</button>
-    <button data-view="prefs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>Настройки</button>
   </nav>
-    <div class="acct-wrap"><button class="howlink" id="howLink" type="button" aria-label="Как это работает"><span class="hl-q" aria-hidden="true">?</span><span class="hl-t">Как это работает</span></button><div class="sync" id="sync">этот браузер</div><span id="acct"></span></div>
+    <div class="acct-wrap"><div class="sync" id="sync">этот браузер</div><span id="acct"></span></div>
   </header>
 
   <main>
@@ -35,8 +34,10 @@
         <div class="row" style="justify-content:space-between"><div><h2 style="font-size:20px;font-weight:800;text-transform:uppercase">Новая карточка</h2><p class="small muted" style="margin:2px 0 0">Перевод за секунду, транскрипция, примеры и звук подберутся сами.</p></div><span class="chip lang lang-badge" id="langBadge" hidden>EN</span></div>
         <form id="addForm" class="add-head">
           <input class="input" id="addInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Слово или фраза: to set off, справляться…" aria-label="Слово или фраза">
+          <input class="input" id="addRu" autocomplete="off" spellcheck="false" placeholder="Перевод вручную (необязательно)" aria-label="Перевод вручную" maxlength="300">
           <button class="btn primary" id="lookupBtn" type="submit">Найти</button>
         </form>
+        <p class="small muted" id="addHint" style="margin:-4px 0 0">Оставьте перевод пустым, и Колода найдёт его сама. Если ввели свой, слово добавится сразу.</p>
         <div class="tagbox" id="addTagBox">
           <label class="f"><span>Теги для новых слов <span class="muted">(необязательно)</span><button class="tip" type="button" aria-label="Пояснение" data-tip="Тег — это название подборки, например «работа» или «путешествие». Слово может иметь несколько тегов и участвовать в разных подборках. Если слово уже есть в колоде, ему просто добавится тег, а прогресс сохранится.">?</button></span>
             <input class="input" id="addTags" autocomplete="off" placeholder="например: работа, поездка" maxlength="200"></label>
@@ -62,20 +63,14 @@
       <div class="row toolbar">
         <input class="input" id="search" placeholder="Поиск по слову, переводу или тегу" style="flex:1;min-width:180px" aria-label="Поиск">
         <select class="input sel" id="sortSel" aria-label="Сортировка"></select>
-      </div>
-      <div class="row tools">
-        <button class="btn" type="button" id="selBtn" data-tip="Режим выбора: отметьте несколько слов, чтобы разом добавить или убрать тег, либо удалить их.">Выбрать</button>
-        <button class="btn" type="button" id="dupBtn" data-tip="Найдёт слова с одинаковым английским написанием и предложит объединить их в одну карточку.">Найти дубли</button>
-        <button class="btn" type="button" id="tagMgr" data-tip="Переименование, объединение и удаление тегов.">Управление тегами</button>
+        <button class="btn iconbtn" type="button" id="wMenuBtn" aria-haspopup="true" aria-expanded="false" aria-label="Действия со словами" data-tip="Выбрать несколько слов, добавить теги, найти дубли и другое"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+        <div class="wmenu" id="wMenu" role="menu" hidden></div>
       </div>
       <div class="filters" id="filters">
         <button data-f="all" aria-pressed="true">Все</button>
-        <button data-f="new" aria-pressed="false">Новые</button>
-        <button data-f="studied" aria-pressed="false" data-tip="Слова, которые вы уже прошли в обучении хотя бы раз">Изучено</button>
-        <button data-f="known" aria-pressed="false" data-tip="Слова с 4-го уровня и выше: память надолго">Надолго</button>
-        <button data-f="due" aria-pressed="false">К повторению</button>
-        <button data-f="hard" aria-pressed="false" data-tip="Слова, в которых вы чаще ошибались">Сложные</button>
-        <button data-f="incomplete" aria-pressed="false" data-tip="Карточки, где нет транскрипции, примеров, их перевода или есть только машинный перевод примеров">Неполные</button>
+        <button data-f="new" aria-pressed="false" data-tip="Слова, которые вы ещё не начали учить">Новые</button>
+        <button data-f="learning" aria-pressed="false" data-tip="Слова, которые вы уже учите: ещё не дошли до 4-го уровня">В процессе</button>
+        <button data-f="known" aria-pressed="false" data-tip="Слова с 4-го уровня и выше: вы их хорошо запомнили">Изучено</button>
       </div>
       <div class="filters tagfilters" id="tagFilters" hidden></div>
       <div id="wlist"></div>

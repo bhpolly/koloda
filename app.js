@@ -3,7 +3,7 @@
 const $ = (s, el=document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const DAY = 86400000;
-const INTERVALS = [0, 1, 3, 7, 16, 35, 80, 180]; // дни для коробок 1..7
+const INTERVALS = [0, 1, 2, 4, 8, 16, 35, 90]; // дни для уровней 1..7 (чаще, чем раньше: по образцу Anki)
 const shuffle = a => { a = a.slice(); for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
 const startOfDay = (t=Date.now()) => { const d=new Date(t); d.setHours(0,0,0,0); return d.getTime(); };
 const dayKey = (t=Date.now()) => { const d=new Date(t); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
@@ -36,7 +36,7 @@ function showStoreWarn(){
 try{ localStorage.setItem("koloda_probe","1"); localStorage.removeItem("koloda_probe"); }catch{ storageBad=true; }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, planSeen:0, deck:"", goal:10, revCap:40, level:"B1", modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, planSeen:0, sched:0, nick:"", deck:"", goal:10, revCap:40, level:"B1", modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -49,7 +49,7 @@ function sanitizeCard(c){
   const id = /^[\w-]{1,64}$/.test(c.id) ? c.id : uid();
   return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
     examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>{ const o={en:str(x?.en,300), ru:str(x?.ru,300)}; if(x?.src) o.src=str(x.src,8); if(x?.mt) o.mt=true; if(x?.pin) o.pin=true; return o; }).filter(x=>x.en),
-    created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
+    created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), errs:Math.max(0,Math.min(999,Math.round(numv(c.errs)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
 function sanitizeSettings(s){
   const o=structuredClone(DEFAULTS); if(!s||typeof s!=="object") return o;
@@ -60,7 +60,7 @@ function sanitizeSettings(s){
   if([3,5,10,15,20,30,50].includes(+s.goal)) o.goal=+s.goal;
   if([15,25,40,60,100].includes(+s.revCap)) o.revCap=+s.revCap;
   if(["A2","B1","B2","C1"].includes(s.level)) o.level=s.level;
-  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.planSeen=Math.max(0,Math.min(9,+s.planSeen||0)); o.deck=str(s.deck,30);
+  o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.planSeen=Math.max(0,Math.min(9,+s.planSeen||0)); o.sched=Math.max(0,Math.min(9,+s.sched||0)); o.nick=str(s.nick,30).trim(); o.deck=str(s.deck,30);
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -257,7 +257,7 @@ function setSync(){
   renderAcct();
 }
 /* ============ cards ============ */
-function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, last:0, demo:!!f.demo }; }
+function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, errs:0, last:0, demo:!!f.demo }; }
 const status = c => !c.box ? "new" : (c.box>=4 ? "known" : "learning");
 const isDue = c => c.box>0 && c.due <= Date.now();
 const allCards = () => [...Store.cards.values()];
@@ -551,20 +551,17 @@ async function enrichInfo(en){
     const out={ipa:"", pos:"", audio:"", examples:[], meanings:null, dict:"skip", tat:"ok", wik:"skip", src:{}};
     const core=coreOf(en), words=core.split(/\s+/).filter(Boolean), vars=phraseVariants(en);
     if(!core) return out;
-    // 1. словарь: слова и двусловные сочетания
-    let d={state:"skip"};
-    if(words.length<=2) d=await FREE.dict(core);
+    // всё независимое запрашиваем одновременно: время подбора = самый медленный сервис, а не сумма
+    const [d, wd, wi, t] = await Promise.all([
+      words.length<=2 ? FREE.dict(core) : Promise.resolve({state:"skip"}),
+      wiktDefs(core), wiktIpa(core), tatoebaExamples(en,3)
+    ]);
     out.dict=d.state;
     if(d.state==="ok"){ out.ipa=d.ipa; out.pos=d.pos; out.audio=d.audio; out.meanings=d.meanings; if(d.ipa) out.src.ipa="словарь"; }
-    // 2. Викисловарь: определения с примерами и транскрипция (хорошо знает фразы и фразовые глаголы)
-    const [wd, wi]=await Promise.all([ wiktDefs(core), out.ipa?Promise.resolve({state:"skip",ipa:""}):wiktIpa(core) ]);
     out.wik = wd.state==="net"||wi.state==="net" ? "net" : wd.state;
     if(!out.ipa && wi.ipa){ out.ipa=wi.ipa; out.src.ipa="Викисловарь"; }
     if(!out.pos && wd.pos) out.pos=wd.pos;
-    // 3. офлайн-словарь произношений
     if(!out.ipa){ const c=await cmuIpa(core); if(c){ out.ipa=c; out.src.ipa="офлайн-словарь"; } }
-    // 4. примеры: Tatoeba (с переводом) -> Викисловарь -> словарь
-    const t=await tatoebaExamples(en,3);
     out.tat=t.state; out.examples=t.items.slice();
     const add=(list, hitOnly, src)=>{ for(const e of list){ if(out.examples.length>=3) break; const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||out.examples.some(y=>norm(y.en)===norm(x))) continue; out.examples.push({en:x, ru:"", src}); } };
     if(out.examples.length<3) add(wd.examples, true, "wik");
@@ -655,7 +652,24 @@ addInput.addEventListener("input", ()=>{
   const v=addInput.value.trim(), b=$("#langBadge");
   b.hidden=!v; b.textContent = isCyr(v) ? "RU → EN" : "EN → RU";
 });
-$("#addForm").addEventListener("submit", e=>{ e.preventDefault(); lookup(); });
+$("#addForm").addEventListener("submit", e=>{ e.preventDefault(); $("#addRu").value.trim() ? addManual() : lookup(); });
+$("#addRu").addEventListener("input",()=>{ const has=!!$("#addRu").value.trim(); $("#lookupBtn").textContent=has?"Добавить":"Найти"; });
+/* слово с переводом, введённым вручную: добавляем сразу, транскрипцию и примеры подтягиваем в фоне */
+async function addManual(){
+  const w=addInput.value.trim(), tr=$("#addRu").value.trim();
+  if(!w){ addInput.focus(); return; }
+  const lang=isCyr(w)?"ru":"en";
+  if(lang==="ru" && isCyr(tr)){ toast("Для русского слова впишите английский перевод"); $("#addRu").focus(); return; }
+  if(lang==="en" && !isCyr(tr)){ toast("Впишите перевод на русский"); $("#addRu").focus(); return; }
+  addState={ text:w, lang, senses:[], sel:-1, picks:[], manual:tr, loading:false, error:null };
+  const en = lang==="ru" ? tr : w;
+  await saveDraft();
+  $("#addRu").value=""; $("#lookupBtn").textContent="Найти";
+  const c=allCards().find(x=>dupKey(x.en)===dupKey(en));
+  if(c && (!c.ipa || !c.examples.length) && !(await getSample())){
+    enrichInfo(c.en).then(async info=>{ applyInfo(c,info); if(c.examples.some(x=>!x.ru)){ try{ await FREE.translateExamples(c.examples); }catch{} } Store.saveCard(c); if(view==="words") renderList(); }).catch(()=>{});
+  }
+}
 
 async function lookup(){
   const text = addInput.value.trim(); if(!text) { addInput.focus(); return; }
@@ -669,9 +683,18 @@ async function lookup(){
       const r = await askJSON(lookupPrompt(text, lang));
       senses = (r?.senses||[]).filter(s=>s && s.en && s.ru).slice(0,6).map(s=>({...s, examples:(s.examples||[]).filter(x=>x&&x.en).slice(0,3)}));
     } else if(lang==="en"){
-      const [tr, info] = await Promise.all([FREE.translate(text,"en","ru"), enrichInfo(text)]);
-      addState.meanings = info.meanings; addState.info = info;
-      senses = FREE.variants(tr, text).map(v=>({en:text, ru:v, ipa:info.ipa, pos:info.pos, audio:info.audio, examples:info.examples.map(x=>({...x})), free:true, enriched:true}));
+      // варианты перевода показываем сразу, как только ответил переводчик; транскрипция и примеры подтянутся следом
+      const infoP = enrichInfo(text);
+      const tr = await FREE.translate(text,"en","ru");
+      senses = FREE.variants(tr, text).map(v=>({en:text, ru:v, ipa:"", pos:"", audio:"", examples:[], free:true, enriched:true}));
+      const st0=addState;
+      infoP.then(info=>{
+        if(addState!==st0) return;
+        st0.info=info; st0.meanings=info.meanings; st0.infoLoading=false;
+        st0.senses?.forEach(sn=>{ sn.ipa=info.ipa; sn.pos=info.pos; sn.audio=info.audio; sn.examples=info.examples.map(x=>({...x})); });
+        refreshDraft();
+      }).catch(()=>{ if(addState===st0){ st0.infoLoading=false; refreshDraft(); } });
+      addState.infoLoading=true;
     } else {
       const tr = await FREE.translate(text,"ru","en");
       senses = FREE.variants(tr, text).map(v=>({en:v, ru:text, examples:[], free:true, enriched:false}));
@@ -727,7 +750,7 @@ function renderAdd(){
       <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(c.ru)}</span></div></div>${sayBtn(c.en,"en",false)}</div>
       ${c.examples.length?`<ul class="ex-list">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`
         : `<div class="row small muted">Примеров пока нет. <button type="button" class="btn ghost" id="fetchEx" style="min-height:32px;padding:4px 8px">Подобрать примеры</button></div>`}
-      ${(!c.ipa || !c.examples.length) && st.info ? `<div class="small muted">${esc(infoHint(st.info))}</div>` : ""}
+      ${st.infoLoading ? `<div class="small muted">Подбираю транскрипцию и примеры…</div>` : (!c.ipa || !c.examples.length) && st.info ? `<div class="small muted">${esc(infoHint(st.info))}</div>` : ""}
       <button type="button" class="btn primary wide" id="saveCard">${sameEn?(newRu.length?"Добавить перевод к существующей":"Добавить теги к существующей"):"Сохранить карточку"}</button>
     </div>`;
   }
@@ -974,22 +997,12 @@ function reportSkipped(sk){
 /* ---- дополнить данные у всей колоды ---- */
 let fillRes=null, fillBusy=false;
 const needsWork = c => !c.ipa || !c.examples.length || (mmLeft()>0 && c.examples.some(x=>!x.ru));
-function renderFillBox(){
-  const el=$("#fillBox"); if(!el || fillBusy) return;
-  if(SOURCE!=="free"){ el.innerHTML=""; return; }
-  const miss=allCards().filter(needsWork);
-  let h="";
-  if(fillRes) h+=`<div class="feedback ${fillRes.cls} small result"><button class="x" type="button" id="fillClose" aria-label="Закрыть">×</button>${esc(fillRes.msg)}</div>`;
-  if(miss.length) h+=`<div class="panel row" style="justify-content:space-between;gap:12px"><div><b>Не хватает данных у ${miss.length} ${plural(miss.length,"слова","слов","слов")}</b><div class="small muted">Нет транскрипции, примеров или перевода примеров. Колода поищет их в словарях. Можно остановить в любой момент: найденное сохранится.</div></div><button class="btn primary" id="fillBtn" type="button" data-tip="Поиск идёт по всем словам, где чего-то не хватает: транскрипция, примеры, перевод примеров. У бесплатного переводчика есть дневной лимит: если он закончится, остальное можно добрать завтра.">Найти недостающее</button></div>`;
-  el.innerHTML=h;
-  $("#fillClose")?.addEventListener("click",()=>{ fillRes=null; renderFillBox(); });
-  $("#fillBtn")?.addEventListener("click",fillDeck);
-}
-async function fillDeck(){
+function renderFillBox(){ const el=$("#fillBox"); if(el) el.innerHTML=""; }
+async function fillDeck(src){
   if(impBusy||fillBusy) return;
-  const list=allCards().filter(needsWork); if(!list.length) return;
+  const list=(src||allCards()).filter(needsWork); if(!list.length){ toast("У выбранных слов уже есть всё, что можно найти"); return; }
   fillBusy=true; impBusy=true; impStop=false; fillRes=null;
-  const btn=$("#fillBtn"); btn.onclick=()=>{ impStop=true; btn.textContent="Останавливаю…"; };
+  const btn={textContent:""}; toast(`Ищу недостающее у ${list.length} ${plural(list.length,"слова","слов","слов")}…`);
   const before=usage.mm.c;
   let gain={ipa:0,ex:0};
   try{ gain=await enrichCards(list, await getSample(), btn); }
@@ -1001,7 +1014,7 @@ async function fillDeck(){
     if(st) msg+=" Подбор остановлен.";
     if(left) msg+=` Без транскрипции или примеров осталось ${left}: возможно, этих слов нет в словарях.`;
     if(noTr && mmLeft()<=0) msg+=` Дневной лимит переводчика исчерпан: у ${noTr} ${plural(noTr,"слова","слов","слов")} примеры пока без перевода, их можно добрать завтра.`;
-    fillRes={msg, cls:found?"ok":"neutral"};
+    fillRes=null; toast(msg);
     renderList(); renderLearn();
   }
 }
@@ -1052,8 +1065,8 @@ function filteredCards(){
   let list=allCards();
   if(tagFilter) list=list.filter(c=>c.tags.includes(tagFilter));
   if(filter==="due") list=list.filter(isDue);
-  else if(filter==="hard") list=list.filter(c=>c.fails>0||(c.lapses>0&&c.box<4));
   else if(filter==="studied") list=list.filter(c=>c.box>0);
+  else if(filter==="tomorrow"){ const t0=startOfDay()+DAY; list=list.filter(c=>c.box>0&&c.due>=t0&&c.due<t0+DAY); }
   else if(filter==="incomplete") list=list.filter(c=>quality(c).length>0);
   else if(filter!=="all") list=list.filter(c=>status(c)===filter);
   if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||c.tags.some(t=>t.includes(q)));
@@ -1065,7 +1078,9 @@ const FILTER_EMPTY={
   hard:"Сложных слов пока нет. Так держать!",
   new:"Новых слов нет: все слова уже прошли обучение.",
   studied:"Пока нет изученных слов. Начните обучение на вкладке «Учить».",
-  known:"Пока нет слов «надолго». Они появляются, когда слово доходит до 4-го уровня."
+  known:"Пока нет изученных слов. Слово становится изученным, когда доходит до 4-го уровня.",
+  learning:"Слов «в процессе» нет: либо всё ещё новое, либо уже изучено.",
+  tomorrow:"На завтра повторений не запланировано."
 };
 function resetFilters(){ filter="all"; tagFilter=""; $("#search").value=""; shown=PAGE; $("#filters").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed", x.dataset.f==="all")); renderList(); }
 function emptyListHtml(){
@@ -1087,7 +1102,6 @@ function renderList(){
   tf.innerHTML=tags.length?`<span class="label">Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Нажмите на тег, чтобы увидеть только слова из этой подборки. Нажмите ещё раз, чтобы снять фильтр. Учить подборку можно кнопкой ниже или на вкладке «Учить».">?</button></span>`+tags.map(([t,n])=>`<button type="button" class="tagchip${t===tagFilter?" on":""}" data-tagf="${esc(t)}" aria-pressed="${t===tagFilter}" ${tipAttr(t===tagFilter?"Снять фильтр по тегу":"Показать только слова с тегом «"+t+"»")}>${esc(t)} <small>${n}</small></button>`).join(""):"";
   tf.querySelectorAll("[data-tagf]").forEach(b=>b.onclick=()=>{ tagFilter = tagFilter===b.dataset.tagf ? "" : b.dataset.tagf; shown=PAGE; renderList(); });
   $("#sortSel").value=sortMode;
-  $("#selBtn").textContent=selMode?"Готово":"Выбрать"; $("#selBtn").classList.toggle("on",selMode);
   const el=$("#wlist");
   if(!Store.cards.size){ el.innerHTML=`<div class="panel empty stack" style="align-items:center;text-align:center;gap:12px"><div class="muted">Колода пуста. Добавьте первое слово выше, или загрузите готовый список.</div><div class="row" style="justify-content:center"><button class="btn primary" type="button" id="emptyAdd">Добавить слово</button></div></div>`; $("#emptyAdd").onclick=()=>$("#addInput").focus(); renderSelBar(); return; }
   const list=filteredCards();
@@ -1099,7 +1113,7 @@ function renderList(){
     return `<div class="witem">
     <div class="wrow${sel?" selected":""}" role="${selMode?"checkbox":"button"}" ${selMode?`aria-checked="${sel}"`:""} tabindex="0" data-edit="${c.id}">
       ${selMode?`<span class="chk" aria-hidden="true"></span>`:""}${sayBtn(c.en)}
-      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}${(()=>{ const q=quality(c); return q.length?` <span class="qchip" ${tipAttr("Не хватает: "+q.join(", ")+". Кнопка «Найти недостающее» в начале страницы поищет это в словарях.")}>неполная</span>`:""; })()}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
+      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
       <span class="exslot">${has?`<button type="button" class="exbtn${open?" open":""}" data-ex="${c.id}" aria-expanded="${open}" aria-label="Примеры использования" ${tipAttr(open?"Скрыть примеры":"Показать примеры использования ("+has+")")}>${CHEV}</button>`:""}</span>
       <span class="nextdue${isDue(c)?" due":""}">${dueLabel(c)}</span>
       ${boxesHtml(c)}
@@ -1119,25 +1133,53 @@ function renderList(){
 }
 
 /* ---- выбор нескольких слов ---- */
-$("#selBtn").onclick=()=>{ selMode=!selMode; if(!selMode) selected.clear(); renderList(); };
+const wMenu=$("#wMenu"), wMenuBtn=$("#wMenuBtn");
+function closeWMenu(){ wMenu.hidden=true; wMenuBtn.setAttribute("aria-expanded","false"); }
+function openWMenu(){
+  const n=visSel().length, all=filteredCards().length, dupN=n?`среди выбранных (${n})`:"во всей колоде";
+  const it=(k,l,d="",dis=false)=>`<button type="button" role="menuitem" data-wm="${k}" ${dis?"disabled":""}><b>${l}</b>${d?`<small>${d}</small>`:""}</button>`;
+  wMenu.innerHTML=`<div class="wm-h">Выбор слов</div>
+    ${it("sel",selMode?"Закончить выбор":"Выбрать слова","отметьте нужные слова в списке")}
+    ${it("all",`Выбрать все (${all})`,"все слова по текущему фильтру и поиску",!all)}
+    ${selMode&&n?it("none","Снять выбор",`выбрано: ${n}`):""}
+    <div class="wm-h">${n?`С выбранными (${n})`:"Со словами"}</div>
+    ${it("tag","Добавить тег","",!n)}${it("untag","Убрать тег","",!n)}
+    ${it("fill","Найти недостающие данные","транскрипция, примеры, их перевод",!n)}
+    ${it("dup","Найти дубли",dupN)}
+    ${it("del","Удалить","",!n)}
+    <div class="wm-h">Теги</div>${it("tags","Управление тегами","переименовать, объединить, удалить")}`;
+  wMenu.hidden=false; wMenuBtn.setAttribute("aria-expanded","true");
+  const r=wMenuBtn.getBoundingClientRect(); if(r.top>180 || r.bottom>innerHeight-420) window.scrollBy({top:r.top-110,behavior:"smooth"});
+}
+wMenuBtn.onclick=e=>{ e.stopPropagation(); hideTip(); wMenu.hidden ? openWMenu() : closeWMenu(); };
+document.addEventListener("click",e=>{ if(!wMenu.hidden && !e.target.closest("#wMenu")) closeWMenu(); });
+document.addEventListener("keydown",e=>{ if(e.key==="Escape" && !wMenu.hidden){ closeWMenu(); wMenuBtn.focus(); } });
+wMenu.onclick=e=>{
+  const b=e.target.closest("[data-wm]"); if(!b||b.disabled) return; const k=b.dataset.wm; closeWMenu();
+  if(k==="sel"){ selMode=!selMode; if(!selMode) selected.clear(); renderList(); }
+  else if(k==="all"){ selMode=true; filteredCards().forEach(c=>selected.add(c.id)); renderList(); }
+  else if(k==="none"){ selected.clear(); renderList(); }
+  else if(k==="tag") bulkAddTag();
+  else if(k==="untag") bulkRemoveTag();
+  else if(k==="fill") fillDeck(selCards());
+  else if(k==="dup") openDupScanner(visSel().length?visSel():null);
+  else if(k==="del") bulkDelete();
+  else if(k==="tags") openTagManager();
+};
 function renderSelBar(){
   const bar=$("#selBar"); if(!bar) return;
   if(!selMode){ bar.hidden=true; bar.innerHTML=""; return; }
   const n=visSel().length, hid=selected.size-n, all=filteredCards().length;
   bar.hidden=false;
-  bar.innerHTML=`<span class="selcount"><b>${n}</b> ${n?"выбрано":"— отметьте слова"}${hid?` <span class="muted small">(ещё ${hid} скрыто фильтром)</span>`:""}</span>
+  bar.innerHTML=`<span class="selcount"><b>${n}</b> ${n?"выбрано · действия в меню ⋮":"— отметьте слова"}${hid?` <span class="muted small">(ещё ${hid} скрыто фильтром)</span>`:""}</span>
     <button class="btn" type="button" data-sb="all" ${tipAttr("Выбрать все слова, подходящие под текущий фильтр и поиск")}>Все (${all})</button>
     <button class="btn" type="button" data-sb="none" ${n?"":"disabled"}>Снять</button>
-    <button class="btn" type="button" data-sb="add" ${n?"":"disabled"} ${tipAttr("Добавить тег всем выбранным словам")}>+ Тег</button>
-    <button class="btn" type="button" data-sb="rem" ${n?"":"disabled"} ${tipAttr("Убрать тег у выбранных слов")}>− Тег</button>
-    <button class="btn danger" type="button" data-sb="del" ${n?"":"disabled"} ${tipAttr("Удалить выбранные слова насовсем")}>Удалить</button>`;
+    <button class="btn" type="button" data-sb="done">Готово</button>`;
   bar.querySelectorAll("[data-sb]").forEach(b=>b.onclick=()=>{
     hideTip(); const k=b.dataset.sb;
     if(k==="all"){ filteredCards().forEach(c=>selected.add(c.id)); renderList(); }
     else if(k==="none"){ selected.clear(); renderList(); }
-    else if(k==="add") bulkAddTag();
-    else if(k==="rem") bulkRemoveTag();
-    else if(k==="del") bulkDelete();
+    else if(k==="done"){ selMode=false; selected.clear(); renderList(); }
   });
 }
 /* действия применяются только к выбранным словам, которые сейчас видны (фильтр или поиск не должны менять скрытые) */
@@ -1176,7 +1218,6 @@ function bulkDelete(){
 }
 
 /* ---- управление тегами ---- */
-$("#tagMgr").onclick=openTagManager;
 function openTagManager(){
   const tags=tagCounts();
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Теги</h2><button class="btn" id="tm-close" type="button">Готово</button></div>
@@ -1210,8 +1251,8 @@ function dupKey(en){
 const findDupEn = en => { const k=dupKey(en); return k ? allCards().find(c=>dupKey(c.en)===k) : null; };
 const dupIgnore=new Set();
 function bestOf(group){ return [...group].sort((a,b)=>b.box-a.box||b.reps-a.reps||b.examples.length-a.examples.length||(b.ipa?1:0)-(a.ipa?1:0)||a.created-b.created)[0]; }
-function dupGroups(){
-  const m=new Map(); allCards().forEach(c=>{ const k=dupKey(c.en); if(!k) return; (m.get(k)||m.set(k,[]).get(k)).push(c); });
+function dupGroups(scope){
+  const m=new Map(); (scope||allCards()).forEach(c=>{ const k=dupKey(c.en); if(!k) return; (m.get(k)||m.set(k,[]).get(k)).push(c); });
   return [...m].filter(([k,g])=>g.length>1 && !dupIgnore.has(k)).sort((a,b)=>b[1].length-a[1].length||a[0].localeCompare(b[0]));
 }
 function mergeInto(keep, others){
@@ -1225,17 +1266,19 @@ function mergeInto(keep, others){
   }
   return keep;
 }
-function openDupScanner(){
-  const groups=dupGroups();
+let dupScope=null;
+function openDupScanner(scopeIds){
+  if(scopeIds!==undefined) dupScope=scopeIds;
+  const groups=dupGroups(dupScope?dupScope.map(id=>Store.cards.get(id)).filter(Boolean):null);
   const body=groups.length ? `<p class="small muted" style="margin:0">Одинаковое английское слово или фраза (без учёта регистра, «to», артиклей и скобок). Выберите карточку, которую оставить: теги, транскрипция, примеры и лучший прогресс перенесутся в неё.</p>
     <div class="row" style="justify-content:space-between"><span class="small">Групп: ${groups.length}</span><button class="btn primary" type="button" id="dupAll" ${tipAttr("Объединить все группы: останется карточка с лучшим прогрессом")}>Объединить все</button></div>
     <div class="stack" style="gap:12px;max-height:50vh;overflow:auto">${groups.map(([k,g],gi)=>{ const keep=bestOf(g); return `<div class="dupgrp" data-k="${esc(k)}"><div class="label">${esc(k)}</div>${g.map(c=>`<label class="duprow"><input type="radio" name="dg${gi}" value="${c.id}" ${c===keep?"checked":""}><span><b>${esc(c.en)}</b> — ${esc(c.ru)}<br><span class="muted small">уровень ${c.box}/7 · примеров: ${c.examples.length}${c.tags.length?" · "+c.tags.map(esc).join(", "):""}</span></span></label>`).join("")}<div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-dg="skip">Не объединять</button><button class="btn primary" type="button" data-dg="merge">Объединить</button></div></div>`; }).join("")}</div>`
     : `<div class="panel empty muted" style="text-align:center">Дублей не нашлось: у каждого английского слова одна карточка.</div>`;
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Дубли</h2><button class="btn" id="dup-close" type="button">Готово</button></div>${body}`);
-  $("#dup-close").onclick=()=>{ closeModal(); renderAll(); };
+  $("#dup-close").onclick=()=>{ dupScope=null; closeModal(); renderAll(); };
   let snaps=[];
   const undoMerge=n=>toast(`Объединено: удалено дублей ${n}`, {label:"Отменить", fn:()=>{ Store.restoreMany(snaps); renderAll(); toast("Объединение отменено"); }});
-  const doMerge=(k,keepId)=>{ const g=allCards().filter(c=>dupKey(c.en)===k); const keep=g.find(c=>c.id===keepId)||bestOf(g); const others=g.filter(c=>c!==keep); snaps.push(...g.map(c=>structuredClone(c))); mergeInto(keep,others); Store.saveMany([keep]); Store.deleteMany(others.map(c=>c.id)); return others.length; };
+  const doMerge=(k,keepId)=>{ const g=(dupScope?dupScope.map(id=>Store.cards.get(id)).filter(Boolean):allCards()).filter(c=>dupKey(c.en)===k); const keep=g.find(c=>c.id===keepId)||bestOf(g); const others=g.filter(c=>c!==keep); snaps.push(...g.map(c=>structuredClone(c))); mergeInto(keep,others); Store.saveMany([keep]); Store.deleteMany(others.map(c=>c.id)); return others.length; };
   $("#modalBody").querySelectorAll(".dupgrp").forEach(el=>{
     const k=el.dataset.k;
     el.querySelector('[data-dg="merge"]').onclick=()=>{ const id=el.querySelector("input:checked")?.value; snaps=[]; const n=doMerge(k,id); openDupScanner(); undoMerge(n); };
@@ -1243,7 +1286,7 @@ function openDupScanner(){
   });
   $("#dupAll")?.addEventListener("click",()=>{ let n=0; snaps=[]; groups.forEach(([k])=>{ n+=doMerge(k); }); openDupScanner(); undoMerge(n); });
 }
-$("#dupBtn").onclick=openDupScanner;
+
 
 /* edit modal */
 /* ---- кнопка «Назад» (телефон, браузер): закрывает окно или спрашивает про выход из тренировки, а не уводит со страницы ---- */
@@ -1275,7 +1318,7 @@ function openEdit(id){
     <div class="tagbox" id="e-tagbox"><label class="f"><span>Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Через запятую. По тегу слова можно фильтровать в списке и учить отдельной подборкой.">?</button></span><input class="input" id="e-tags" autocomplete="off" value="${esc((c.tags||[]).join(", "))}" placeholder="например: работа, поездка" maxlength="200"></label><div class="tagchips"></div></div>
     ${SOURCE==="free"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
     <div class="small muted">Следующее повторение: ${dueLabel(c)} · повторений: ${c.reps}</div>
-    <div class="row">${c.box>0?`<button class="btn" id="e-prac" type="button" data-tip="Пройти упражнения по этому слову прямо сейчас. Уровень и срок повтора не изменятся.">Потренировать сейчас</button>`:""}${c.box<7?`<button class="btn" id="e-master" type="button" data-tip="Поставит прогресс слова на 100%: следующий повтор через 180 дней. Сбросить прогресс можно в любой момент.">Отметить выученным</button>`:`<span class="chip">Прогресс 100%</span>`}</div>
+    <div class="row">${c.box>0?`<button class="btn" id="e-prac" type="button" data-tip="Пройти упражнения по этому слову прямо сейчас. Уровень и срок повтора не изменятся.">Потренировать сейчас</button>`:""}${c.box<7?`<button class="btn" id="e-master" type="button" data-tip="Поставит прогресс слова на 100%: следующий повтор через 90 дней. Сбросить прогресс можно в любой момент.">Отметить выученным</button>`:`<span class="chip">Прогресс 100%</span>`}</div>
     <div class="row" id="e-actions" style="justify-content:space-between">
       <div class="row"><button class="btn danger" id="e-del">Удалить</button><button class="btn ghost" id="e-reset">Сбросить прогресс</button></div>
       <div class="row"><button class="btn" id="e-cancel">Отмена</button><button class="btn primary" id="e-save">Сохранить</button></div>
@@ -1389,7 +1432,7 @@ function renderLearn(){
   const plan=learnPlan(false), gs=plan.g, todo=plan.list.length, n=Math.min(S().batch, todo);
   if(cs.length && gs.newTarget===0 && gs.revTarget===0 && !gs.d.closed){ const d=Store.stats.days[dayKey()] ||= emptyDay(); d.closed=true; Store.saveStats(); }   // задач на сегодня нет: день закрыт сам
   const st=streakInfo();
-  const studied=cs.filter(c=>c.box>0).length, longterm=cs.filter(c=>c.box>=4).length, dueAll=cs.filter(isDue).length, hard=cs.filter(c=>c.fails>0 || (c.lapses>0 && c.box<4)).length;
+  const studied=cs.filter(c=>c.box>0).length, longterm=cs.filter(c=>c.box>=4).length, dueAll=cs.filter(isDue).length;
   const notStarted=cs.filter(c=>!c.box).length;
   const deckName=S().deck?`«${esc(S().deck)}»`:"все слова";
   const msg = gs.closed ? "День закрыт. Так держать!" : st.n ? "Закройте цель дня, чтобы серия не прервалась." : "Закройте цель дня и запустите свою серию.";
@@ -1417,9 +1460,9 @@ function renderLearn(){
       <p>${msg}</p>
     </div>
     <div class="prog-stats">
-      <button class="pstat lime" type="button" data-gof="studied" ${tipAttr("Слова, которые вы уже прошли в обучении хотя бы раз. Остальные слова колоды ещё не начаты: их вы учите по несколько в день, цель дня задана в настройках. Надолго выучены те, что дошли до 4-го уровня. Нажмите, чтобы открыть список.")}><b>${studied}</b><span>изучено</span><small>из ${cs.length} · надолго ${longterm}</small></button>
-      <button class="pstat pink" type="button" data-gof="due" ${tipAttr("Слова, у которых пришёл срок повтора. Нажмите, чтобы открыть их список.")}><b>${dueAll}</b><span>ждут повторения</span></button>
-      <button class="pstat dark" type="button" data-gof="hard" ${tipAttr("Слова, в которых вы чаще ошибались: с ними ещё стоит поработать. Нажмите, чтобы открыть их список.")}><b>${hard}</b><span>нужно подтянуть</span></button>
+      <button class="pstat lime" type="button" data-gof="known" ${tipAttr("Слова, которые вы уже хорошо запомнили: они дошли до 4-го уровня и теперь возвращаются раз в 8 дней и реже. «В работе» — слова, которые вы уже начали учить, но они ещё не дошли до этого уровня. Нажмите, чтобы открыть список.")}><b>${longterm}</b><span>завершено</span><small>из ${cs.length} · в работе ${studied-longterm}</small></button>
+      <button class="pstat pink" type="button" data-gof="due" ${tipAttr("Слова, у которых пришёл срок повтора. Нажмите, чтобы открыть их список.")}><b>${dueAll}</b><span>на повторение</span></button>
+      <button class="pstat dark" type="button" data-gof="tomorrow" ${tipAttr("Сколько слов вернётся на повторение завтра.")}><b>${tomorrow}</b><span>вернутся завтра</span></button>
     </div>
   </section>
 
@@ -1657,7 +1700,7 @@ function stepIntro(round, id){
     ${exHtml(c,3)}
   </div>
   <div class="sess-foot"><button class="btn" id="iKnow">Уже знаю</button><button class="btn primary" id="iNext">Дальше <kbd style="opacity:.6;font-size:11px">Enter</kbd></button></div>
-  <div class="small muted" style="text-align:center">«Уже знаю» отправит слово сразу на 4-й уровень: следующий повтор через 16 дней.</div>`;
+  <div class="small muted" style="text-align:center">«Уже знаю» отправит слово сразу на 4-й уровень: следующий повтор через 8 дней.</div>`;
   autoSpeak(f.t, f.l);
   $("#iNext").onclick=()=>done(true);
   $("#iKnow").onclick=()=>{
@@ -1924,6 +1967,7 @@ function finish(){
   for(const id of sess.ids){
     const c=cardOf(id); if(!c) continue;
     const m=sess.mistakes[id], skip=sess.skipped.has(id), wasNew=!c.box;
+    if(!skip && m>=1){ c.errs=(c.errs||0)+1; changed.push(c); }   // ошибка = слово хоть раз ответили неверно в этой подборке (не больше одной за подборку)
     if(practice){ rows.push({c,m,skip,ok:!m,note:""}); continue; }   // тренировка: прогресс не трогаем
     let ok=false, note="";
     if(skip || m===0){
@@ -1940,10 +1984,11 @@ function finish(){
       if(c.box>1){ c.box--; c.lapses++; note=`уровень снижен до ${c.box}`; }
       else note="не изучено, слово останется в подборке";
       c.fails=Math.min(99,c.fails+1);
+      if(!wasNew) c.due=Math.min(c.due, now);   // забытое слово возвращается в тот же день, как в Anki
       if(!wasNew) rfN++;
       if(c.fails>=3) note+=(note?"; ":"")+"проблемное слово: поправьте карточку";
     }
-    c.last=now; changed.push(c);
+    c.last=now; if(!changed.includes(c)) changed.push(c);
     rows.push({c,m,skip,ok,note});
   }
   if(changed.length) Store.saveMany(changed);
@@ -1962,7 +2007,7 @@ function finish(){
     <div class="bignum" style="font-size:52px">${acc}%</div><div class="muted">точность · ${rows.length} ${plural(rows.length,"слово","слова","слов")}</div><div class="small muted">${sub}</div>${practice?"":`<div class="small" style="margin-top:6px"><b>Цель дня:</b> новые ${gs.newDone}/${gs.newTarget} · повторения ${gs.revDone}/${gs.revTarget}${justClosed?` · <b>день закрыт!</b> Серия: ${streakInfo().n} ${plural(streakInfo().n,"день","дня","дней")}`:gs.closed?" · день закрыт":""}</div>`}</div>
     ${(()=>{ if(practice) return ""; const t0=startOfDay()+DAY, all=allCards().filter(c=>c.box>0), tom=all.filter(c=>c.due>=t0 && c.due<t0+DAY).length, three=all.filter(c=>c.due>=t0 && c.due<t0+3*DAY).length; return `<div class="small muted" style="text-align:center">Что дальше: ${tom?`завтра вернётся ${tom} ${plural(tom,"слово","слова","слов")}`:"завтра повторений нет"}${three>tom?`, а в ближайшие три дня всего ${three}`:""}. Приходите, когда придёт срок: так слова запоминаются надолго.</div>`; })()}
     <div class="sum-list">${rows.map(r=>`<div class="sum-row"><b>${esc(r.c.en)}</b><span class="${r.ok?"ok":"no"}">${r.skip?"уже знаю":r.m?`ошибок: ${r.m}`:"без ошибок"} · ${practice?dueLabel(r.c):r.ok?dueLabel(r.c)+(r.note?" · "+r.note:""):r.note}</span></div>`).join("")}</div>
-    <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 180 дней).">Считать выученными (${clean})</button>`:""}${more?`<button class="btn primary" id="more">${practice?"Тренировать далее":"Изучать далее"}</button>`:""}<button class="btn" id="fin">Закончить</button></div>`;
+    <div class="sess-foot">${practice&&clean?`<button class="btn" id="master" data-tip="Поставит словам без ошибок из этой тренировки прогресс 100%: они уйдут на очень долгий повтор (через 90 дней).">Считать выученными (${clean})</button>`:""}${more?`<button class="btn primary" id="more">${practice?"Тренировать далее":"Изучать далее"}</button>`:""}<button class="btn" id="fin">Закончить</button></div>`;
   $("#fin").onclick=closeSess;
   if($("#master")) $("#master").onclick=()=>{ rows.filter(r=>!r.m).forEach(r=>masterCard(r.c)); toast("Слова отмечены выученными"); $("#master").remove(); };
   if($("#more")) $("#more").onclick=()=>{ sess=null; startRun(kind,false); };
@@ -1975,61 +2020,35 @@ function renderStats(){
   const el=$("#v-stats"), cs=allCards();
   setTimeout(()=>bindGo(el));
   const cnt={new:0,learning:0,known:0}; cs.forEach(c=>cnt[status(c)]++);
-  const due=cs.filter(isDue).length;
   const days=Store.stats.days||{}; let right=0,total=0; Object.values(days).forEach(d=>{right+=d.right||0; total+=d.total||0;});
-  const st=streakInfo();
-  // прогноз на 7 дней
-  const fc=[]; for(let i=0;i<7;i++){ const s=startOfDay()+i*DAY, e=s+DAY; fc.push(cs.filter(c=>c.box>0 && (i===0 ? c.due<e : c.due>=s && c.due<e)).length); }
-  const fmax=Math.max(1,...fc);
-  const wd=["вс","пн","вт","ср","чт","пт","сб"];
-  // активность 14 дней
-  const act=[]; for(let i=13;i>=0;i--){ const t=Date.now()-i*DAY; act.push({t, n:days[dayKey(t)]?.n||0}); }
-  const amax=Math.max(1,...act.map(a=>a.n));
-  // распределение по уровням
-  const byBox=Array(8).fill(0); cs.forEach(c=>byBox[c.box]++);
-  const maxBox=Math.max(1,...byBox);
+  const st=streakInfo(), wd=["вс","пн","вт","ср","чт","пт","сб"];
+  const wk=[]; for(let i=6;i>=0;i--){ const t=Date.now()-i*DAY; wk.push({t, n:days[dayKey(t)]?.learned||0}); }
+  const wmax=Math.max(1,...wk.map(a=>a.n)), wsum=wk.reduce((s,a)=>s+a.n,0);
+  const top=cs.filter(c=>c.errs>0).sort((a,b)=>b.errs-a.errs||b.last-a.last).slice(0,10);
   const TIPS={
-    known:"Слова, которые вы вспомнили несколько раз подряд: с 4-го уровня, следующий повтор не раньше чем через 16 дней. Это память «надолго».",
-    studied:"Слова, которые вы уже прошли в обучении хотя бы раз без ошибок. Они растут в уровнях по мере повторений.",
+    known:"Слова, которые вы хорошо запомнили: с 4-го уровня, следующий повтор не раньше чем через 8 дней. В списке слов они стоят в фильтре «Изучено».",
+    work:"Слова, которые вы уже начали учить, но они ещё не дошли до 4-го уровня.",
     acc:"Точность — доля правильных ответов во всех упражнениях за всё время: выбор перевода, пары, сборка из букв и ввод. Правильным считается ответ с первой попытки и без подсказки. Знакомство с карточкой не учитывается.",
-    path:"Каждое правильное повторение поднимает слово на уровень выше, и оно возвращается всё реже: через 1, 3, 7, 16, 35, 80 и 180 дней. Одна ошибка за тренировку уровень не меняет, две и больше снижают его на 1. Новое слово без ошибок сразу получает 2-й уровень, кнопка «Уже знаю» даёт 4-й. С 4-го уровня слово считается выученным."
+    week:"Сколько новых слов вы брали в работу в каждый из последних 7 дней: слово засчитывается, когда вы прошли его в обучении.",
+    top:"Ошибка — это когда слово хотя бы раз ответили неверно за одну подборку. За одну подборку слову засчитывается не больше одной ошибки."
   };
   const tip=t=>`<button class="tip" type="button" aria-label="Пояснение" data-tip="${esc(t)}">?</button>`;
-  const NAMES=["новые","1 д","3 д","7 д","16 д","35 д","80 д","180 д"];
-  const LONG=["Новые: ещё не начаты","Уровень 1: повтор через 1 день","Уровень 2: повтор через 3 дня","Уровень 3: повтор через 7 дней","Уровень 4: повтор через 16 дней","Уровень 5: повтор через 35 дней","Уровень 6: повтор через 80 дней","Уровень 7: повтор через 180 дней"];
-  const BAR=["color-mix(in srgb,var(--ink) 25%,transparent)","var(--pink)","var(--pink)","var(--pink)","var(--accent)","var(--accent)","var(--accent)","var(--accent)"];
   el.innerHTML=`
   <div class="sec-head" style="margin-top:4px"><h2>Ваш прогресс</h2><button class="pill-link" data-go="learn">Учить</button></div>
   <div class="kpis">
     <div class="kpi"><b>${cs.length}</b><span>всего карточек</span></div>
-    <div class="kpi"><b>${cnt.learning+cnt.known}</b><span>изучено${tip(TIPS.studied)}</span><small>из ${cs.length}</small></div>
-    <div class="kpi"><b>${cnt.known}</b><span>надолго${tip(TIPS.known)}</span><small>с 4-го уровня</small></div>
+    <div class="kpi"><b>${cnt.learning}</b><span>в работе${tip(TIPS.work)}</span><small>из ${cs.length}</small></div>
+    <div class="kpi"><b>${cnt.known}</b><span>завершены${tip(TIPS.known)}</span><small>с 4-го уровня</small></div>
     <div class="kpi"><b>${total?Math.round(right/total*100)+"%":"—"}</b><span>точность ответов${tip(TIPS.acc)}</span><small>${total?`верных ${right} из ${total}`:"пока нет ответов"}</small></div>
   </div>
-  <div class="panel stack" style="gap:12px">
-    <div class="row" style="justify-content:space-between"><div class="label">Путь слов${tip(TIPS.path)}</div><span class="small muted">серия: ${st.n} ${plural(st.n,"день","дня","дней")}</span></div>
-    <p class="small muted" style="margin:0">Слово поднимается на уровень выше после каждого верного повторения и возвращается всё реже. Цифра под столбиком — через сколько дней слово вернётся.</p>
-    <div class="path">
-      ${byBox.map((n,i)=>`<div class="pcol" title="${LONG[i]} · слов: ${n}" role="img" aria-label="${LONG[i]}, слов: ${n}"><em>${n||""}</em><i style="--r:${n/maxBox};background:${BAR[i]}"></i></div>`).join("")}
-      ${NAMES.map(t=>`<span class="plab">${t}</span>`).join("")}
-      <span class="pgrp g0" style="grid-column:1"><b>Новые</b></span>
-      <span class="pgrp g1" style="grid-column:2 / span 3"><b>Учу · ${cnt.learning}</b><small>раз в 1–7 дней</small></span>
-      <span class="pgrp g2" style="grid-column:5 / span 4"><b>Надолго · ${cnt.known}</b><small>раз в 16–180 дней</small></span>
-    </div>
-  </div>
   <div class="panel">
-    <div class="row" style="justify-content:space-between"><div class="label">Повторения на неделю</div><span class="small muted">сегодня: ${due}</span></div>
-    <div class="bars">${fc.map((n,i)=>`<div class="bar"><em>${n||""}</em><i class="${i===0?"today":""}" style="height:${n/fmax*100}%"></i></div>`).join("")}</div>
-    <div class="bar-labels">${fc.map((_,i)=>`<span>${i===0?"сег.":wd[new Date(Date.now()+i*DAY).getDay()]}</span>`).join("")}</div>
-  </div>
-  <div class="panel">
-    <div class="row" style="justify-content:space-between"><div class="label">Активность за 2 недели</div><span class="small muted">слов в день</span></div>
-    <div class="bars">${act.map((a,i)=>`<div class="bar"><em>${a.n||""}</em><i class="${i===13?"today":""}" style="height:${a.n/amax*100}%"></i></div>`).join("")}</div>
-    <div class="bar-labels">${act.map(a=>`<span>${new Date(a.t).getDate()}</span>`).join("")}</div>
+    <div class="row" style="justify-content:space-between"><div class="label">Слов взято в работу за 7 дней${tip(TIPS.week)}</div><span class="small muted">всего: ${wsum} · серия: ${st.n} ${plural(st.n,"день","дня","дней")}</span></div>
+    <div class="bars">${wk.map((a,i)=>`<div class="bar"><em>${a.n||""}</em><i class="${i===6?"today":""}" style="height:${a.n/wmax*100}%"></i></div>`).join("")}</div>
+    <div class="bar-labels">${wk.map((a,i)=>`<span>${i===6?"сег.":wd[new Date(a.t).getDay()]}</span>`).join("")}</div>
   </div>
   <div class="panel stack" style="gap:8px">
-    <div class="label">Трудные слова</div>
-    ${(()=>{ const hard=cs.filter(c=>c.fails>0||(c.lapses>0&&c.box<4)).sort((a,b)=>(b.fails+b.lapses)-(a.fails+a.lapses)).slice(0,6); return hard.length? hard.map(c=>`<div class="row" style="justify-content:space-between"><span><b>${esc(c.en)}</b> <span class="muted">— ${esc(c.ru)}</span></span><span class="chip">${c.lapses?`забыто ${c.lapses}×`:`ошибок: ${c.fails}`}</span></div>`).join("") : `<div class="muted small">Пока нет: сюда попадут слова, в которых вы чаще ошибаетесь или которые забылись.</div>`; })()}
+    <div class="label">Топ-10 трудных слов${tip(TIPS.top)}</div>
+    ${top.length? top.map((c,i)=>`<div class="row" style="justify-content:space-between"><span><span class="muted">${i+1}.</span> <b>${esc(c.en)}</b> <span class="muted">— ${esc(c.ru)}</span></span><span class="chip">${c.errs} ${plural(c.errs,"ошибка","ошибки","ошибок")}</span></div>`).join("") : `<div class="muted small">Пока пусто: сюда попадут слова, в которых вы чаще всего ошибаетесь.</div>`}
   </div>`;
 }
 
@@ -2053,6 +2072,11 @@ function renderPrefs(){
   const sw=(k,l,d)=>`<div class="setrow"><div class="lbl"><b>${l}</b><span>${d}</span></div><label class="switch"><input type="checkbox" data-mode="${k}" ${s.modes[k]?"checked":""} aria-label="${l}"><span></span></label></div>`;
   el.innerHTML=`
   <div class="sec-head" style="margin-top:4px"><h2>Настройки</h2></div>
+  <div class="panel">
+    <div class="label" style="margin-bottom:4px">Профиль</div>
+    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Имя или ник</b><span>показывается на значке в шапке</span></div><input class="input" id="nick" maxlength="30" autocomplete="nickname" placeholder="Как вас зовут?" value="${esc(s.nick||"")}" style="max-width:220px" aria-label="Имя или ник"></div>
+    <div class="setrow"><div class="lbl"><b>Знакомство с сайтом</b><span>показать короткий тур по разделам</span></div><button class="btn" id="tourBtn" type="button">Показать</button></div>
+  </div>
   <div class="panel">
     <div class="label" style="margin-bottom:4px">Обучение</div>
     <div class="setrow"><div class="lbl"><b>Слов за одну тренировку</b><span>от 5 до 25</span></div><div class="range"><input type="range" id="batch" min="5" max="25" value="${s.batch}" aria-label="Слов за тренировку"><output id="batchOut">${s.batch}</output></div></div>
@@ -2087,13 +2111,13 @@ function renderPrefs(){
     <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
     ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Email для MyMemory</b><span>Необязательно. Переводчик MyMemory бесплатно переводит около 5 000 символов в день, это примерно 30–50 новых карточек. Если указать email, лимит вырастет до 50 000. Подтверждать почту не нужно, адрес уходит только в MyMemory и сохраняется в ваших настройках.</span></div><input class="input" id="mmEmail" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(s.mmEmail||"")}" style="max-width:260px"></div>`:""}
     ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Подбор переводов и примеров<button class="tip" type="button" aria-label="Пояснение" data-tip="Колода берёт данные из бесплатных сервисов, у которых есть дневные лимиты. Здесь видно, сколько обращений вы сделали сегодня (оценка по этому браузеру), и можно проверить, отвечают ли сервисы.">?</button></b><span>обращения сегодня и проверка источников</span></div><button class="btn" id="diagBtn" type="button">Проверить</button><div id="diagOut" class="small" style="flex-basis:100%">${usageHtml()}</div></div>`:""}
-    <div class="setrow"><div class="lbl"><b>Знакомство с сайтом</b><span>показать короткий тур по разделам</span></div><button class="btn" id="tourBtn" type="button">Показать</button></div>
     <div class="setrow"><div class="lbl"><b>Резервная копия</b><span>сохраните колоду файлом или скопируйте как текст; при загрузке более свежий прогресс в колоде не перезаписывается</span></div><div class="row"><button class="btn" id="expFile">Скачать файл</button><button class="btn" id="impFile">Из файла</button><button class="btn" id="exp">Копировать</button><button class="btn" id="imp">Вставить</button></div><input type="file" id="impFileIn" accept=".json,application/json,text/plain" hidden></div>
     <div class="setrow"><div class="lbl"><b>Очистить колоду</b><span>удалить все карточки и статистику</span></div><button class="btn danger" id="wipe">Очистить</button></div>
     <div id="dataArea"></div>
   </div>`;
   bindAccountPanel(el);
   $("#tourBtn").onclick=()=>startTour(true);
+  $("#nick").onchange=e=>{ s.nick=e.target.value.trim().slice(0,30); Store.saveSettings(); renderAcct(); toast(s.nick?"Имя сохранено":"Имя убрано"); };
   if($("#diagBtn")) $("#diagBtn").onclick=runDiag;
   const save=()=>{ Store.saveSettings(); };
   $("#batch").oninput=e=>{ s.batch=+e.target.value; $("#batchOut").textContent=s.batch; };
@@ -2179,15 +2203,13 @@ async function initAuth(){
 }
 function renderAcct(){
   const el=$("#acct"); if(!el) return;
-  if(!AUTH.enabled){ el.innerHTML=""; return; }
-  if(Store.mode==="supa" && Store.user){
-    const em=Store.user.email||"аккаунт";
-    el.innerHTML=`<button class="avatar" id="acctBtn" title="${esc(em)}" aria-label="Аккаунт ${esc(em)}">${esc(em.charAt(0).toUpperCase())}</button>`;
-    $("#acctBtn").onclick=()=>go("prefs");
-  } else {
-    el.innerHTML=`<button class="pill-link" id="acctBtn">Войти</button>`;
-    $("#acctBtn").onclick=()=>openAuth("signin");
-  }
+  const em=(Store.mode==="supa" && Store.user) ? (Store.user.email||"") : "";
+  const nick=(S().nick||"").trim(), name=nick||em;
+  const ini=name ? esc(name.charAt(0).toUpperCase()) : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>`;
+  const login = AUTH.enabled && !em ? `<button class="pill-link" id="loginBtn">Войти</button>` : "";
+  el.innerHTML=`${login}<button class="avatar" id="acctBtn" data-tip="Настройки и профиль" title="${esc(name||"Настройки")}" aria-label="Настройки${name?" ("+esc(name)+")":""}" aria-current="${view==="prefs"?"page":"false"}">${ini}</button>`;
+  $("#acctBtn").onclick=()=>go("prefs");
+  if($("#loginBtn")) $("#loginBtn").onclick=()=>openAuth("signin");
 }
 function openAuth(mode="signin", msg=""){
   const up = mode==="signup";
@@ -2369,12 +2391,12 @@ let tour=null;
 function tourSteps(){
   const st=[];
   st.push({title:"Добро пожаловать в Колоду", text:"Покажем за минуту, где что находится. Тур можно пропустить: он всегда доступен в настройках.", welcome:true});
-  st.push({view:"learn", target:".top .tabs", title:"Разделы", text:"Учить: тренировки и повторения. Слова: добавление и список. Прогресс: сколько выучено. Настройки: озвучка, форматы упражнений и количество слов."});
-  if(AUTH.enabled && Store.mode==="local") st.push({view:"learn", target:"#acctBtn", title:"Создайте аккаунт", text:"Так слова сохранятся в облаке и будут на любом устройстве. Можно и позже, пока колода хранится только в этом браузере."});
+  st.push({view:"learn", target:".top .tabs", title:"Разделы", text:"Учить: тренировки и повторения. Слова: добавление и список. Прогресс: сколько выучено. Настройки открываются по значку профиля справа вверху: озвучка, форматы упражнений и количество слов."});
+  if(AUTH.enabled && Store.mode==="local") st.push({view:"learn", target:"#loginBtn", title:"Создайте аккаунт", text:"Так слова сохранятся в облаке и будут на любом устройстве. Можно и позже, пока колода хранится только в этом браузере."});
   st.push({view:"words", target:"#addForm", title:"Добавляйте слова", text:"Введите слово или фразу на английском или русском. Колода предложит варианты перевода, а к выбранному подтянет транскрипцию, произношение и примеры."});
   st.push({view:"words", target:"details.imp summary", title:"Много слов сразу", text:"Вставьте список: «слово — перевод» или просто слова, перевод подберётся сам."});
   st.push({view:"learn", target:"#v-learn .hero-cta .btn.primary", title:"Учите", text:"Когда в колоде есть слова, здесь кнопка «Учить». Слова идут партиями: знакомство, выбор перевода, пары, вставка в предложение, сборка из букв и ввод с клавиатуры."});
-  st.push({view:"stats", target:".kpis", title:"Прогресс и повторения", text:"Слова возвращаются на повторение через 1, 3, 7, 16 дней и дальше, пока не запомнятся надолго. Здесь видно, сколько слов выучено и насколько вы точны."});
+  st.push({view:"stats", target:".kpis", title:"Прогресс и повторения", text:"Слова возвращаются на повторение через 1, 2, 4, 8 дней и дальше, пока не запомнятся надолго. Здесь видно, сколько слов выучено и насколько вы точны."});
   st.push({view:"prefs", target:"#v-prefs .setrow", title:"Настройки", text:"Сколько слов учить за раз (от 5 до 25), с какого языка показывать карточки, какие упражнения включить и как озвучивать слова."});
   st.push({title:"Всё готово", text:"Добавьте первое слово или загрузите восемь слов для пробы на главной странице.", last:true});
   return st;
@@ -2475,7 +2497,7 @@ window.addEventListener("storage", e=>{
 const HOWFEATS=[
   {c:"lime", t:"Перевод за секунду", p:"Введите слово на русском или английском: варианты перевода подберутся сами.", i:'<path d="M4 5h9M8.5 3v2M6 5c.6 3 3 6 6 7M12 5c-.6 3-3 6-6 7"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/>'},
   {c:"", t:"Примеры и звук", p:"Транскрипция, живые примеры с переводом и озвучка в каждой карточке.", i:'<path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>'},
-  {c:"pinky", t:"Повторения по плану", p:"Слово возвращается через 1, 3, 7, 16 дней и дальше, ровно когда оно начинает забываться.", i:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'},
+  {c:"pinky", t:"Повторения по плану", p:"Слово возвращается через 1, 2, 4, 8 дней и дальше, ровно когда оно начинает забываться.", i:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>'},
   {c:"", t:"Шесть видов заданий", p:"Знакомство, выбор перевода, пары, вставка в предложение, сборка из букв и ввод с клавиатуры.", i:'<rect x="3" y="6" width="14" height="14" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v12"/>'},
   {c:"", t:"Подборки по тегам", p:"Один тег — одна подборка: работа, поездка, фильмы. Слово может входить в несколько.", i:'<path d="M3 12V4h8l10 10-8 8L3 12z"/><circle cx="7.5" cy="8.5" r="1.2"/>'},
   {c:"lime", t:"Список за один раз", p:"Вставьте десятки слов, перевод и примеры подберутся сами. Что не разобралось, останется в поле.", i:'<path d="M4 6h16M4 12h16M4 18h10"/>'},
@@ -2535,7 +2557,7 @@ async function howSearch(text){
 function howAnswer(ok, given){ how.answered={ok, given}; if(!ok) how.miss++; renderHow(); }
 function howNext(){ if(how.q>=how.qs.length-1) how.done=true; else how.q++; how.answered=null; how.typed=""; how.used=[]; renderHow(); }
 function howTimeline(){
-  // как в тренировке: без ошибок новое слово сразу получает 2-й уровень (повтор через 3 дня), с ошибкой остаётся на 1-м (завтра)
+  // как в тренировке: без ошибок новое слово сразу получает 2-й уровень (повтор через 2 дня), с ошибкой остаётся на 1-м (завтра)
   const from=how.miss?1:2, steps=INTERVALS.slice(from); let total=0;
   return steps.map(d=>{ total+=d; return {d, date:new Date(Date.now()+total*DAY).toLocaleDateString("ru-RU",{day:"numeric",month:"short"})}; });
 }
@@ -2573,7 +2595,7 @@ function renderHow(){
   if(!how.done) s3=lock("Появится после трёх вопросов.");
   else {
     const tl=howTimeline(), exists=allCards().some(x=>norm(x.en)===norm(c.en));
-    s3=`<p class="small" style="margin:0">${how.miss?"Была ошибка, поэтому":"Всё без ошибок, значит"} «${esc(c.en)}» вернётся на повторение <b>${how.miss?"завтра":"через 3 дня"}</b>. Дальше паузы растут, пока слово не запомнится надолго.</p>
+    s3=`<p class="small" style="margin:0">${how.miss?"Была ошибка, поэтому":"Всё без ошибок, значит"} «${esc(c.en)}» вернётся на повторение <b>${how.miss?"завтра":"через 2 дня"}</b>. Дальше паузы растут, пока слово не запомнится надолго.</p>
       <div class="tline">${tl.map(t=>`<div class="tl"><b>+${t.d} ${plural(t.d,"день","дня","дней")}</b><span>${t.date}</span></div>`).join("")}</div>
       <div class="row" style="gap:10px;flex-wrap:wrap">${how.added||exists?`<span class="chip">Слово в вашей колоде</span><button class="btn primary" type="button" data-howgo="learn">Перейти к обучению</button>`:`<button class="btn primary" type="button" id="howAdd">Добавить «${esc(c.en)}» в мою колоду</button><button class="btn" type="button" data-howgo="words">Ввести свои слова</button>`}</div>`;
   }
@@ -2611,12 +2633,27 @@ function go(v){
   if(!VIEWS.includes(v)) v="learn"; view=v;
   VIEWS.forEach(x=>$("#v-"+x).hidden = x!==v);
   $("#tabs").querySelectorAll("button").forEach(b=>b.setAttribute("aria-current", b.dataset.view===v?"page":"false"));
-  $("#howLink").setAttribute("aria-current", v==="how"?"page":"false");
+  $("#howLink").setAttribute("aria-current", v==="how"?"page":"false"); $("#acctBtn")?.setAttribute("aria-current", v==="prefs"?"page":"false");
   try{ history.replaceState(null,"","#"+v); }catch{}
   renderView(); window.scrollTo(0,0);
 }
 function renderView(){ ({learn:renderLearn, words:renderList, stats:renderStats, prefs:renderPrefs, how:renderHow})[view](); }
-function renderAll(){ knownCache=null; renderView(); setSync(); }
+/* одноразово: подтягиваем сроки старых слов под новые, более короткие интервалы; слова с ошибками возвращаем в повтор */
+function migrateSched(){
+  if(S().sched>=3 || !Store.cards.size) return;
+  const now=Date.now(), ch=[];
+  for(const c of Store.cards.values()){
+    if(!c.errs && (c.lapses||c.fails)){ c.errs=(c.lapses||0)+(c.fails||0); if(!ch.includes(c)) ch.push(c); }
+    if(!(c.box>0)) continue;
+    const lim=startOfDay(c.last||c.created||now)+INTERVALS[c.box]*DAY;
+    let due=Math.min(c.due||lim, lim);
+    if(c.fails>0 || (c.lapses>0 && c.box<4)) due=Math.min(due, now);
+    if(due!==c.due){ c.due=due; if(!ch.includes(c)) ch.push(c); }
+  }
+  if(ch.length) Store.saveMany(ch);
+  S().sched=3; Store.saveSettings();
+}
+function renderAll(){ knownCache=null; migrateSched(); renderView(); setSync(); }
 $("#toLearn").onclick=()=>go("learn");
 $("#howLink").onclick=()=>{ if(view!=="how") how=howReset(); go("how"); };
 $("#tabs").onclick=e=>{ const b=e.target.closest("button"); if(b) go(b.dataset.view); };
