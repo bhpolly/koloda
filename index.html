@@ -33,11 +33,12 @@
       <div class="panel stack" id="addPanel">
         <div class="row" style="justify-content:space-between"><div><h2 style="font-size:20px;font-weight:800;text-transform:uppercase">Новая карточка</h2><p class="small muted" style="margin:2px 0 0">Перевод за секунду, транскрипция, примеры и звук подберутся сами.</p></div><span class="chip lang lang-badge" id="langBadge" hidden>EN</span></div>
         <form id="addForm" class="add-head">
-          <input class="input" id="addInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Слово или фраза: to set off, справляться…" aria-label="Слово или фраза">
-          <input class="input" id="addRu" autocomplete="off" spellcheck="false" placeholder="Перевод вручную (необязательно)" aria-label="Перевод вручную" maxlength="300">
+          <input class="input" id="addInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Слово или фраза" aria-label="Слово или фраза">
           <button class="btn primary" id="lookupBtn" type="submit">Найти</button>
+          <input class="input" id="addRu" autocomplete="off" spellcheck="false" placeholder="Свой перевод" aria-label="Свой перевод" maxlength="300">
+          <button class="btn" id="addBtn" type="button" disabled>Добавить</button>
         </form>
-        <p class="small muted" id="addHint" style="margin:-4px 0 0">Оставьте перевод пустым, и Колода найдёт его сама. Если ввели свой, слово добавится сразу.</p>
+        <p class="small muted" id="addHint" style="margin:-4px 0 0">«Найти» подберёт перевод, транскрипцию и примеры. Не подошло? Впишите свой перевод и нажмите «Добавить».</p>
         <div class="tagbox" id="addTagBox">
           <label class="f"><span>Теги для новых слов <span class="muted">(необязательно)</span><button class="tip" type="button" aria-label="Пояснение" data-tip="Тег — это название подборки, например «работа» или «путешествие». Слово может иметь несколько тегов и участвовать в разных подборках. Если слово уже есть в колоде, ему просто добавится тег, а прогресс сохранится.">?</button></span>
             <input class="input" id="addTags" autocomplete="off" placeholder="например: работа, поездка" maxlength="200"></label>

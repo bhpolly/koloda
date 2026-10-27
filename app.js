@@ -652,8 +652,10 @@ addInput.addEventListener("input", ()=>{
   const v=addInput.value.trim(), b=$("#langBadge");
   b.hidden=!v; b.textContent = isCyr(v) ? "RU → EN" : "EN → RU";
 });
-$("#addForm").addEventListener("submit", e=>{ e.preventDefault(); $("#addRu").value.trim() ? addManual() : lookup(); });
-$("#addRu").addEventListener("input",()=>{ const has=!!$("#addRu").value.trim(); $("#lookupBtn").textContent=has?"Добавить":"Найти"; });
+$("#addForm").addEventListener("submit", e=>{ e.preventDefault(); lookup(); });
+$("#addRu").addEventListener("input",()=>{ $("#addBtn").disabled=!$("#addRu").value.trim(); });
+$("#addRu").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); if($("#addRu").value.trim()) addManual(); } });
+$("#addBtn").addEventListener("click",()=>addManual());
 /* слово с переводом, введённым вручную: добавляем сразу, транскрипцию и примеры подтягиваем в фоне */
 async function addManual(){
   const w=addInput.value.trim(), tr=$("#addRu").value.trim();
@@ -664,7 +666,7 @@ async function addManual(){
   addState={ text:w, lang, senses:[], sel:-1, picks:[], manual:tr, loading:false, error:null };
   const en = lang==="ru" ? tr : w;
   await saveDraft();
-  $("#addRu").value=""; $("#lookupBtn").textContent="Найти";
+  $("#addRu").value=""; $("#addBtn").disabled=true;
   const c=allCards().find(x=>dupKey(x.en)===dupKey(en));
   if(c && (!c.ipa || !c.examples.length) && !(await getSample())){
     enrichInfo(c.en).then(async info=>{ applyInfo(c,info); if(c.examples.some(x=>!x.ru)){ try{ await FREE.translateExamples(c.examples); }catch{} } Store.saveCard(c); if(view==="words") renderList(); }).catch(()=>{});
@@ -736,10 +738,6 @@ function renderAdd(){
       h += `<details class="imp"><summary class="small">Значения в английском словаре</summary><ul class="ex-list small" style="margin-top:8px">${st.meanings.slice(0,4).map(m=>m.defs.slice(0,2).map(d=>`<li><span class="chip">${esc(m.pos)}</span><div>${esc(d.def)}${d.ex?`<div class="ru"><i>${esc(d.ex)}</i></div>`:""}</div></li>`).join("")).join("")}</ul></details>`;
     }
   }
-  if(!st.loading){
-    h += `<div class="stack" style="gap:8px">
-      <label class="f">Свой вариант перевода<input class="input" id="manualTr" autocomplete="off" placeholder="${st.lang==="ru"?"English translation":"перевод на русский"}" value="${esc(st.manual||"")}"></label></div>`;
-  }
   const c = currentDraft();
   const sameEn = c ? findDupEn(c.en) : null;
   if(c){
@@ -767,7 +765,6 @@ function renderAdd(){
     }
     renderAdd(); if(st.picks.includes(i)) autoSpeak(v.en,"en");
   });
-  const m=$("#manualTr"); if(m){ m.oninput=()=>{ st.manual=m.value; if(m.value.trim()) { st.sel=-1; st.picks=[]; } refreshDraft(); }; }
   const fe=$("#fetchEx"); if(fe) fe.onclick=fetchManualExamples;
   const sv=$("#saveCard"); if(sv) sv.onclick=saveDraft;
 }
@@ -1833,7 +1830,7 @@ function stepCloze(round, id){
   let hinted=false;
   body().innerHTML = head("cloze") + `
   <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div></div>
-  <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="слово или фраза в нужной форме" aria-label="Пропущенное слово">
+  <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="впишите слово" aria-label="Пропущенное слово">
   <div class="row" style="justify-content:space-between"><div class="row"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div><button class="btn primary" type="submit" id="check">Проверить</button></div></form>
   <div id="fb"></div>`;
   const ti=$("#ti"); ti.focus();
@@ -2074,7 +2071,7 @@ function renderPrefs(){
     <div class="label" style="margin-bottom:4px">Профиль</div>
     <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Имя или ник</b><span>показывается на значке в шапке</span></div><input class="input" id="nick" maxlength="30" autocomplete="nickname" placeholder="Как вас зовут?" value="${esc(s.nick||"")}" style="max-width:220px" aria-label="Имя или ник"></div>
   </div>
-  <div class="panel">
+  <div class="panel" id="learnPanel">
     <div class="label" style="margin-bottom:4px">Обучение</div>
     <div class="setrow"><div class="lbl"><b>Слов за одну тренировку</b><span>от 5 до 25</span></div><div class="range"><input type="range" id="batch" min="5" max="25" value="${s.batch}" aria-label="Слов за тренировку"><output id="batchOut">${s.batch}</output></div></div>
     <div class="setrow"><div class="lbl"><b>Сначала показывать</b><span>язык лицевой стороны карточки</span></div>${seg("first",[["en","English"],["ru","Русский"]])}</div>
@@ -2393,7 +2390,7 @@ function tourSteps(){
   st.push({view:"words", target:"details.imp summary", title:"Много слов сразу", text:"Вставьте список: «слово — перевод» или просто слова, перевод подберётся сам."});
   st.push({view:"learn", target:"#v-learn .hero-cta .btn.primary", title:"Учите", text:"Когда в колоде есть слова, здесь кнопка «Учить». Слова идут партиями: знакомство, выбор перевода, пары, вставка в предложение, сборка из букв и ввод с клавиатуры."});
   st.push({view:"stats", target:".kpis", title:"Прогресс и повторения", text:"Слова возвращаются на повторение через 1, 2, 4, 8 дней и дальше, пока не запомнятся надолго. Здесь видно, сколько слов выучено и насколько вы точны."});
-  st.push({view:"prefs", target:"#v-prefs .setrow", title:"Настройки", text:"Сколько слов учить за раз (от 5 до 25), с какого языка показывать карточки, какие упражнения включить и как озвучивать слова."});
+  st.push({view:"prefs", target:"#learnPanel", title:"Настройки", text:"Сколько слов учить за раз (от 5 до 25), с какого языка показывать карточки, какие упражнения включить и как озвучивать слова."});
   st.push({title:"Всё готово", text:"Добавьте первое слово или загрузите восемь слов для пробы на главной странице.", last:true});
   return st;
 }
