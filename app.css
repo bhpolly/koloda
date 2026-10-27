@@ -1136,3 +1136,18 @@ h2[style*="uppercase"],.panel h2{font-family:var(--f-display);font-weight:900;le
 .flash .word{font-weight:800;font-size:clamp(20px,5.4vw,38px);letter-spacing:-.02em;line-height:1.15;min-width:0;overflow-wrap:anywhere;text-align:center}
 .flash .row{min-width:0;max-width:100%}
 @media (max-width:420px){.flash .word{font-size:clamp(18px,5.6vw,24px)}}
+
+/* на телефоне :hover «залипает» на том месте, куда нажали в прошлом вопросе: отключаем подсветку при наведении без мыши */
+@media (hover:none){
+  .opt:hover:not([disabled]):not(.right):not(.wrong){background:var(--surface-2);transform:none}
+  .mitem:hover:not(.done):not(.sel):not(.err){background:var(--surface-2);transform:none}
+  .btn:hover{background:var(--surface-2);transform:none}
+  .btn.primary:hover{background:var(--accent)}
+  .btn.pink:hover,.btn.mark:hover{background:var(--pink)}
+  .icon-btn:hover{background:var(--surface-2)}
+  .tiles .tile:hover{background:var(--surface-2)}
+  .tabs button:not([aria-current="page"]):hover{background:transparent}
+  .ftile:hover,.feat:hover,.pstat:hover,.howlink:hover{transform:none}
+  .howlink:hover{background:var(--mustard-soft)}
+  .wmenu button:hover:not(:disabled){background:none}
+}
