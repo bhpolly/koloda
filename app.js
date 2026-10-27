@@ -1243,13 +1243,14 @@ $("#dupBtn").onclick=openDupScanner;
 
 /* edit modal */
 /* ---- кнопка «Назад» (телефон, браузер): закрывает окно или спрашивает про выход из тренировки, а не уводит со страницы ---- */
+let modalLock=false;
 const Nav={ silent:0, modal:false, sess:false,
   push(){ try{ history.pushState({koloda:1},"",location.href); return true; }catch{ return false; } },
   pop(){ this.silent++; try{ history.back(); }catch{ this.silent--; } }
 };
 window.addEventListener("popstate",()=>{
   if(Nav.silent>0){ Nav.silent--; return; }
-  if(Nav.modal && !$("#modal").hidden){ Nav.modal=false; $("#modal").hidden=true; return; }
+  if(Nav.modal && !$("#modal").hidden){ if(modalLock){ Nav.push(); return; } Nav.modal=false; $("#modal").hidden=true; return; }
   if(Nav.sess && sess){
     Nav.sess=false;
     if(sess.finished){ closeSess(); return; }
@@ -1258,8 +1259,8 @@ window.addEventListener("popstate",()=>{
   }
 });
 function openModal(html){ $("#modalBody").innerHTML=html; $("#modal").hidden=false; if(!Nav.modal && Nav.push()) Nav.modal=true; }
-function closeModal(){ $("#modal").hidden=true; if(Nav.modal){ Nav.modal=false; Nav.pop(); } }
-$("#modal").addEventListener("click", e=>{ if(e.target.id==="modal") closeModal(); });
+function closeModal(){ modalLock=false; $("#modal").hidden=true; if(Nav.modal){ Nav.modal=false; Nav.pop(); } }
+$("#modal").addEventListener("click", e=>{ if(e.target.id==="modal" && !modalLock) closeModal(); });
 function openEdit(id){
   const c=Store.cards.get(id); if(!c) return;
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Карточка</h2>${boxesHtml(c)}</div>
@@ -1386,24 +1387,13 @@ const FEATS=[
 const featStrip = () => `<div class="feats">${FEATS.map(f=>`<div class="feat ${f.c}"><span class="fi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${f.i}</svg></span><div><b>${f.t}</b><p>${f.p}</p></div></div>`).join("")}</div>`;
 function renderLearn(){
   const el=$("#v-learn"), cs=allCards();
-  if(!cs.length){
-    el.innerHTML = `<section class="welcome">
-      <div class="welcome-in">
-        <span class="hero-kicker">Колода слов</span>
-        <h1 class="welcome-title">Выучите слова <span>надолго</span></h1>
-        <p>Добавьте слово, а Колода подберёт перевод, примеры и звук, а потом вернёт его на повторение ровно тогда, когда оно начнёт забываться.</p>
-        <div class="row hero-cta"><button class="btn primary" data-go="words">Добавить слово</button><button class="btn ghost" id="demoBtn">8 слов для пробы</button></div>
-      </div></section>
-    <div class="sec-head"><h2>Что умеет Колода</h2></div>${featStrip()}`;
-    $("#demoBtn").onclick=()=>{ DEMO.forEach((d,i)=>{ const c=newCard({...d, demo:true}); c.created+=i; Store.saveCard(c); }); renderAll(); toast("Добавлено 8 карточек"); };
-    bindGo(el); return;
-  }
   const tagsAll=tagCounts(); if(S().deck && !tagsAll.some(([t])=>t===S().deck)){ S().deck=""; Store.saveSettings(); }
   const dc=deckCards(), closed=dc.filter(closedLevel).length, nP=Math.min(S().batch, closed);
   const plan=learnPlan(false), gs=plan.g, todo=plan.list.length, n=Math.min(S().batch, todo);
   if(gs.newTarget===0 && gs.revTarget===0 && !gs.d.closed){ const d=Store.stats.days[dayKey()] ||= emptyDay(); d.closed=true; Store.saveStats(); }   // задач на сегодня нет: день закрыт сам
   const st=streakInfo();
   const studied=cs.filter(c=>c.box>0).length, longterm=cs.filter(c=>c.box>=4).length, dueAll=cs.filter(isDue).length, hard=cs.filter(c=>c.fails>0 || (c.lapses>0 && c.box<4)).length;
+  const notStarted=cs.filter(c=>!c.box).length;
   const deckName=S().deck?`«${esc(S().deck)}»`:"все слова";
   const msg = gs.closed ? "День закрыт. Так держать!" : st.n ? "Закройте цель дня, чтобы серия не прервалась." : "Закройте цель дня и запустите свою серию.";
   const pct=(a,b)=>b?Math.round(a/b*100):100, tomorrow=cs.filter(c=>c.box>0 && c.due>=startOfDay()+DAY && c.due<startOfDay()+2*DAY).length;
@@ -1429,7 +1419,7 @@ function renderLearn(){
       <p>${msg}</p>
     </div>
     <div class="prog-stats">
-      <button class="pstat lime" type="button" data-gof="studied" ${tipAttr("Слова, которые вы уже прошли в обучении хотя бы раз без ошибок. Надолго выучены те, что дошли до 4-го уровня. Нажмите, чтобы открыть список.")}><b>${studied}</b><span>изучено</span><small>из ${cs.length} · надолго ${longterm}</small></button>
+      <button class="pstat lime" type="button" data-gof="studied" ${tipAttr("Слова, которые вы уже прошли в обучении хотя бы раз. Остальные слова колоды ещё не начаты: их вы учите по несколько в день, цель дня задана в настройках. Надолго выучены те, что дошли до 4-го уровня. Нажмите, чтобы открыть список.")}><b>${studied}</b><span>изучено</span><small>из ${cs.length} · надолго ${longterm}</small></button>
       <button class="pstat pink" type="button" data-gof="due" ${tipAttr("Слова, у которых пришёл срок повтора. Нажмите, чтобы открыть их список.")}><b>${dueAll}</b><span>ждут повторения</span></button>
       <button class="pstat dark" type="button" data-gof="hard" ${tipAttr("Слова, в которых вы чаще ошибались: с ними ещё стоит поработать. Нажмите, чтобы открыть их список.")}><b>${hard}</b><span>нужно подтянуть</span></button>
     </div>
@@ -1442,7 +1432,8 @@ function renderLearn(){
     <div class="ftile lime compact hero-cta">
       <div class="label">Учить<button class="tip" type="button" aria-label="Пояснение" data-tip="Сначала повторения (самые важные, не больше лимита), потом новые слова до цели дня. Без ошибок уровень растёт (новое слово сразу получает 2-й уровень), с одной ошибкой остаётся прежним, с двумя и больше снижается на 1.">?</button></div>
       <div class="bignum">${todo}</div>
-      <p>${!todo?"Всё изучено на текущих уровнях":plan.extra?"Цель дня выполнена. Можно учить ещё":`${plan.news} ${plural(plan.news,"новое","новых","новых")} · ${plan.revs} на повторении`}</p>
+      <p>${!cs.length?"Добавьте слова, и здесь появится план на сегодня":!todo?"Всё изучено на текущих уровнях":plan.extra?"Цель дня выполнена. Можно учить ещё":`На сегодня: ${plan.news} ${plural(plan.news,"новое","новых","новых")} · ${plan.revs} на повторении`}</p>
+      ${notStarted>plan.news?`<p class="small" style="margin-top:-4px;opacity:.75">Ещё не начато: ${notStarted}. Остальные подключатся в следующие дни: по ${goalOf()} новых в день.</p>`:""}
       <button class="btn primary" data-start="learn" ${todo?"":"disabled"} ${tipAttr("Сначала повторения (самые важные, не больше лимита), потом новые слова до цели дня. Без ошибок уровень растёт (новое слово сразу получает 2-й уровень), с одной ошибкой остаётся прежним, с двумя и больше снижается на 1.")}>${todo?`${plan.extra?"Учить ещё":"Учить"} ${n} ${plural(n,"слово","слова","слов")}`:"Нечего учить"}</button>
       <span class="deco ring"></span>
     </div>
@@ -1462,8 +1453,9 @@ function renderLearn(){
   </div>
   ${deckBar}
   ${AUTH.enabled && Store.mode==="local" ? `<div class="ftile nudge"><div><h3>Сохраните слова в аккаунте</h3><p>Сейчас колода живёт только в этом браузере. С аккаунтом слова не потеряются и будут на любом устройстве.</p></div><div class="row"><button class="btn primary" data-auth="signup">Регистрация</button><button class="btn" data-auth="signin">Вход</button></div></div>` : ""}
-  <div class="sec-head"><h2>Все слова</h2><button class="pill-link" data-go="words">Открыть список · ${cs.length}</button></div>
+  <div class="sec-head"><h2>Все слова</h2>${cs.length?`<button class="pill-link" data-go="words">Открыть список · ${cs.length}</button>`:""}</div>
   <div class="grid2">
+    ${!cs.length?`<div class="panel stack" style="grid-column:1/-1"><div><b>Пока в колоде нет слов</b><div class="small muted">Добавьте своё слово или список, либо загрузите 8 готовых слов, чтобы посмотреть, как всё работает.</div></div><div class="row"><button class="btn primary" type="button" data-go="words">Добавить слово</button><button class="btn" type="button" id="demoBtn">8 слов для пробы</button></div></div>`:""}
     ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>
   ${Object.keys(Store.stats.days||{}).length<5?`<div class="sec-head"><h2>Что умеет Колода</h2></div>${featStrip()}`:""}`;
@@ -1478,6 +1470,7 @@ function renderLearn(){
     $("#blBox").innerHTML=`<div><b>Перенести ${k} ${plural(k,"повторение","повторения","повторений")} на ближайшие дни?</b><div class="small muted">Не больше ${capOf()} в день. Уровни слов не изменятся.</div></div><div class="row"><button class="btn" type="button" id="blNo">Отмена</button><button class="btn primary" type="button" id="blYes">Перенести</button></div>`;
     $("#blNo").onclick=renderLearn; $("#blYes").onclick=()=>{ const m=spreadBacklog(); renderAll(); toast(`Перенесено повторений: ${m}`); };
   });
+  $("#demoBtn")?.addEventListener("click",()=>{ DEMO.forEach((d,i)=>{ const c=newCard({...d, demo:true}); c.created+=i; Store.saveCard(c); }); renderAll(); toast("Добавлено 8 карточек"); });
   bindGo(el);
 }
 function bindGo(el){ el.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>{ go(b.dataset.go); if(b.dataset.go==="words") setTimeout(()=>addInput.focus(),50); }); }
@@ -2226,9 +2219,10 @@ function openNewPassword(recovery=false){
       <label class="f">Новый пароль<input class="input" id="np1" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
       <label class="f">Ещё раз<input class="input" id="np2" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
       <div id="npMsg" role="alert"></div>
-      <div class="row" style="justify-content:flex-end">${recovery?"":`<button type="button" class="btn" id="npCancel">Отмена</button>`}<button class="btn primary" type="submit">Сохранить</button></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn" id="npCancel">${recovery?"Не менять, выйти":"Отмена"}</button><button class="btn primary" type="submit">Сохранить</button></div>
     </form>`);
-  if($("#npCancel")) $("#npCancel").onclick=closeModal;
+  modalLock=recovery;
+  $("#npCancel").onclick=()=>{ closeModal(); if(recovery) doSignOut(); };
   $("#npForm").onsubmit=async e=>{
     e.preventDefault();
     const a=$("#np1").value, b=$("#np2").value, say=t=>$("#npMsg").innerHTML=`<div class="feedback no small">${esc(t)}</div>`;
