@@ -1131,3 +1131,8 @@ h2[style*="uppercase"],.panel h2{font-family:var(--f-display);font-weight:900;le
 .pstat,.pstat.dark,.pstat.pink,.pstat.lime{border:0!important}
 .prog{padding-bottom:190px}
 @media (max-width:520px){.sync{display:none}.top{gap:8px}.logo{font-size:17px;padding-left:34px}.acct-wrap{gap:6px}}
+
+/* слова на карточке: широкий шрифт должен помещаться на телефоне */
+.flash .word{font-weight:800;font-size:clamp(20px,5.4vw,38px);letter-spacing:-.02em;line-height:1.15;min-width:0;overflow-wrap:anywhere;text-align:center}
+.flash .row{min-width:0;max-width:100%}
+@media (max-width:420px){.flash .word{font-size:clamp(18px,5.6vw,24px)}}
