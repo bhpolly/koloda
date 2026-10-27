@@ -340,6 +340,7 @@ details.imp[open] summary::after{content:"−"}
 .modal{position:fixed;inset:0;z-index:30;background:rgba(17,19,42,.5);display:grid;place-items:center;padding:16px}
 .modal .panel{width:100%;max-width:540px;max-height:90vh;overflow-y:auto;background:var(--bg);box-shadow:var(--shadow);border-radius:28px}
 .modal .input{background:var(--surface)}
+.toast-act{border:0;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:800;padding:4px 12px;margin-left:8px;border-radius:999px;cursor:pointer}
 .toast{position:fixed;left:50%;bottom:calc(96px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:40;background:var(--ink);color:var(--bg);padding:12px 20px;border-radius:999px;font-size:14px;font-weight:600;max-width:calc(100% - 32px);box-shadow:var(--shadow)}
 .foot{margin-top:28px;font-size:12px;color:var(--muted);text-align:center}
 .sync.warn::before{background:#F5A524}
@@ -359,7 +360,7 @@ details.imp[open] summary::after{content:"−"}
 .nudge{min-height:0;flex-direction:row;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:16px;border:2px dashed var(--pink)}
 .nudge p{max-width:52ch}
 .foot button{background:none;border:0;color:inherit;text-decoration:underline;cursor:pointer;font:inherit;padding:0}
-@media (max-width:759px){.sync{display:none}}
+@media (max-width:759px){.sync{max-width:46vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;gap:5px}.sync.warn{color:var(--pink-strong)}}
 
 .tip{flex:none;position:relative;width:18px;height:18px;border-radius:50%;border:1.5px solid currentColor;background:none;color:inherit;opacity:.6;font:700 11px/1 var(--f-body);display:inline-grid;place-items:center;cursor:help;padding:0;vertical-align:middle;margin-left:6px}
 .tip::after{content:"";position:absolute;inset:-9px}
