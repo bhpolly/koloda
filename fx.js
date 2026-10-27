@@ -65,6 +65,12 @@ const SPECS={
     [["pink",150,"3%",.62,.1,5.6,-3,8],["lime",120,"17%",.6,.3,6.4,4,-8],["blush",160,"30%",.62,.2,5.9,-4,6],["tulip",110,"46%",.6,.45,6.6,3,-6],["lime",150,"56%",.62,.15,5.2,-2,10]]
       .forEach(([k,sz,l,v,dl,sw,t,ln])=>w.append(gf(k,{w:sz,l,b:-Math.round(sz*1.43*(1-v)),dl,sw,tilt:t,lean:ln})));
   },
+  sess:w=>{
+    [["tulip",84,"2%",.7,.1,5.8,-3,8],["pink",112,"12%",.66,.3,6.2,2,-10],["lime",100,"34%",.7,.5,5.6,-3,6],["blush",120,"60%",.66,.2,6.6,3,-8],
+     ["lime",104,"74%",.7,.15,6.4,4,-12],["tulip",84,"96%",.66,.25,5.5,3,-6]]
+      .forEach(([k,sz,l,v,dl,sw,t,ln])=>w.append(gf(k,{w:sz,l,b:-Math.round(sz*1.43*(1-v)),dl,sw,tilt:t,lean:ln})));
+    const c=doc.createElement("div"); c.className="catwrap"; c.innerHTML=CAT; w.append(c);
+  },
   tile:w=>w.append(gf("blush",{w:120,r:"-18px",b:-70,sw:5.5,dl:.1,tilt:-6,lean:-8})),
   tile2:w=>w.append(gf("pink",{w:120,r:"-18px",b:-70,sw:6,dl:.2,tilt:6,lean:8})),
   mascot:w=>w.append(gf("pink",{w:124,r:"128px",b:-66,sw:5.2,dl:.2,tilt:-4,lean:6})),
@@ -77,7 +83,7 @@ const RULES=[
   [".acts .ftile.lime","tile",SPECS.tile,"corner"],
   [".acts .ftile.compact:not(.lime):not(.addtile)","tile2",SPECS.tile2,"corner"],
   [".howinv","mascot",SPECS.mascot,"corner"],
-  [".flash:not(:has(.ex-list))","card",SPECS.card,"corner"],
+  [".sess","sessm",SPECS.sess,"meadow sessm"],
   [".logo","logo",SPECS.logo,"logo-fx"]
 ];
 const lastNum=new Map();

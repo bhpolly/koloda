@@ -1404,9 +1404,11 @@ function schedDue(box, load){
   return best;
 }
 /* план «Учить»: сначала повторения (до лимита), потом новые (до цели); когда цель выполнена, можно учить сверх */
+/* демо-слова не участвуют в обучении, как только в колоде появились настоящие */
+const skipDemo = c => c.demo && allCards().some(x=>!x.demo);
 function learnPlan(excludeSeen){
-  const base=deckCards().filter(c=>!(excludeSeen&&runSeen.has(c.id)) && !closedLevel(c));
-  const revs=base.filter(c=>c.box>0).sort(reviewOrder), news=base.filter(c=>!c.box).sort((a,b)=>a.created-b.created);
+  const base=deckCards().filter(c=>!(excludeSeen&&runSeen.has(c.id)) && !closedLevel(c) && !skipDemo(c));
+  const revs=base.filter(c=>c.box>0).sort(reviewOrder), news=base.filter(c=>!c.box).sort((a,b)=>((a.fails||0)>0)-((b.fails||0)>0)||a.created-b.created);
   const g=goalState(), revLeft=Math.max(0,g.revTarget-g.tried), newLeft=Math.max(0,g.newTarget-(g.d.learned||0));
   const mix=(rv,nw)=>{ const out=[]; let i=0,j=0; while(i<rv.length||j<nw.length){ if(j<nw.length && (i>=rv.length || (j+0.5)/nw.length <= (i+0.5)/rv.length)) out.push(nw[j++]); else out.push(rv[i++]); } return out; };   // новые слова равномерно между повторениями
   const planned=mix(revs.slice(0,revLeft), news.slice(0,newLeft));
@@ -1439,7 +1441,7 @@ function renderLearn(){
     <div class="goal-h"><b>Цель на сегодня</b><button class="tip" type="button" aria-label="Пояснение" data-tip="Чтобы закрыть день, выучите заданное число новых слов и пройдите повторения, которые пришли на сегодня (но не больше лимита). Учить можно и больше. Закрытый день продлевает серию. Цель и лимит меняются в настройках.">?</button><span class="chip${gs.closed?" ok":""}">${gs.closed?"день закрыт ✓":"в процессе"}</span></div>
     <div class="goal-row"><span>Новые слова</span><div class="gbar" role="img" aria-label="Новые слова ${gs.newDone} из ${gs.newTarget}"><i style="width:${pct(gs.newDone,gs.newTarget)}%"></i></div><b>${gs.newDone}/${gs.newTarget}</b></div>
     <div class="goal-row"><span>Повторения</span><div class="gbar" role="img" aria-label="Повторения ${gs.revDone} из ${gs.revTarget}"><i style="width:${pct(gs.revDone,gs.revTarget)}%"></i></div><b>${gs.revDone}/${gs.revTarget}</b></div>
-    <div class="small muted">${tomorrow?`Завтра ждут повторения: ${tomorrow}. `:""}Цель: ${goalOf()} новых, лимит повторений: ${capOf()}. <button class="pill-link" type="button" data-go="prefs">Изменить</button></div>
+    <div class="small muted">Цель: ${goalOf()} новых, лимит повторений: ${capOf()}. <button class="pill-link" type="button" data-go="prefs">Изменить</button></div>
   </section>`;
   const notes = (backlog?`<div class="resume" id="blBox"><div><b>Накопилось повторений: ${dueAll}</b><div class="small muted">Каждый день показываем самые важные, не больше ${capOf()}. Остальные можно разложить на ближайшие дни: уровни не изменятся.</div></div><div class="row"><button class="btn primary" type="button" data-spread ${tipAttr("Перенесёт лишние повторения на ближайшие дни, чтобы в каждом было не больше лимита. Прогресс слов не меняется.")}>Разложить</button></div></div>`:"")
     + (leech?`<div class="resume" id="lcBox"><div><b>Проблемные слова: ${leech}</b><div class="small muted">Слова, в которых вы ошиблись три раза и больше. Откройте карточку и поправьте перевод или пример: так они запомнятся легче.</div></div><div class="row"><button class="btn" type="button" data-gof="hard">Показать</button></div></div>`:"");
@@ -1458,7 +1460,6 @@ function renderLearn(){
     <div class="prog-stats">
       <button class="pstat lime" type="button" data-gof="known" ${tipAttr("Слова, которые вы уже хорошо запомнили: они дошли до 4-го уровня и теперь возвращаются раз в 8 дней и реже. «В работе» — слова, которые вы уже начали учить, но они ещё не дошли до этого уровня. Нажмите, чтобы открыть список.")}><b>${longterm}</b><span>завершено</span><small>из ${cs.length} · в работе ${studied-longterm}</small></button>
       <button class="pstat pink" type="button" data-gof="due" ${tipAttr("Слова, у которых пришёл срок повтора. Нажмите, чтобы открыть их список.")}><b>${dueAll}</b><span>на повторение</span></button>
-      <button class="pstat dark" type="button" data-gof="tomorrow" ${tipAttr("Сколько слов вернётся на повторение завтра.")}><b>${tomorrow}</b><span>вернутся завтра</span></button>
     </div>
   </section>
 
@@ -1521,7 +1522,7 @@ function deckCards(){ const t=S().deck; return t ? allCards().filter(c=>c.tags.i
 let runSeen=new Set();
 const closedLevel = c => c.box>0 && !isDue(c);          // уровень закрыт: срок повтора ещё не пришёл
 function pickPool(kind){
-  const base=deckCards().filter(c=>!runSeen.has(c.id));  // 1) тег (если выбран)  2) критерий уровня
+  const base=deckCards().filter(c=>!runSeen.has(c.id)&&!skipDemo(c));  // 1) тег (если выбран)  2) критерий уровня
   if(kind==="practice") return base.filter(closedLevel).sort((a,b)=>(a.last||0)-(b.last||0));
   return learnPlan(true).list;
 }
@@ -1831,7 +1832,7 @@ function stepCloze(round, id){
   body().innerHTML = head("cloze") + `
   <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div></div>
   <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="впишите слово" aria-label="Пропущенное слово">
-  <div class="row" style="justify-content:space-between"><div class="row"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div><button class="btn primary" type="submit" id="check">Проверить</button></div></form>
+  <button class="btn primary wide" type="submit" id="check">Проверить</button><div class="row hintrow"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div></form>
   <div id="fb"></div>`;
   const ti=$("#ti"); ti.focus();
   const fillIn=ok=>{ $("#cz").innerHTML=`${esc(before)}<span class="blank fill ${ok?"right":"wrong"}">${esc(target)}</span>${esc(after)}`; };
@@ -1874,7 +1875,7 @@ function stepTyping(round, id){
   body().innerHTML = head("typing") + `
   <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div>${contextHtml(c)}</div>
   <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="по-английски" aria-label="Ответ по-английски">
-  <div class="row" style="justify-content:space-between"><div class="row"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div><button class="btn primary" type="submit" id="check">Проверить</button></div></form>
+  <button class="btn primary wide" type="submit" id="check">Проверить</button><div class="row hintrow"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div></form>
   <div id="fb"></div>`;
   const ti=$("#ti"); ti.focus();
   const accept = v => answerMatch(v, target);

@@ -1198,3 +1198,14 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 .a2hs .a2b{grid-column:1/-1;display:flex;gap:8px;justify-content:flex-end}
 :root[data-theme="dark"] .a2hs{background:#2a2825;color:#F5EDE0}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .a2hs{background:#2a2825;color:#F5EDE0}}
+
+/* тренировка: без полос на фоне, цветы и котик внизу экрана */
+.sess{background:var(--bg)!important}
+.sess::before,.sess::after{display:none!important}
+.fx-deco.sessm{position:fixed;left:0;right:0;bottom:0;height:120px;z-index:0;pointer-events:none;overflow:hidden}
+.sess-top,.sess-body{position:relative;z-index:1}
+.hintrow{justify-content:space-between;margin-top:26px}
+.prog-stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+/* вкладки всегда поверх списка слов */
+.top{z-index:19!important}
+.toolbar,.row.toolbar{z-index:3!important}
