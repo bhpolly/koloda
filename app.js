@@ -1552,7 +1552,7 @@ function showPlan(list){
   const kinds=[nNew?["Знакомство","смотрите слово, перевод и примеры"]:null, ["Выбор перевода","узнаёте слово среди вариантов"], ["Пары","соединяете слово и перевод"], ["Предложения и буквы","вставляете слово, собираете из букв"], ["Ввод","пишете слово сами"]].filter(Boolean);
   body().innerHTML=`<div class="flash plan" style="text-align:left;align-items:stretch;gap:10px">
     <div class="label" style="text-align:center">План занятия</div>
-    <div style="text-align:center"><div class="bignum" style="font-size:44px">${list.length}</div><div class="muted">${bits} · примерно ${mins} ${plural(mins,"минута","минуты","минут")}${k>1?` · ${k} ${plural(k,"часть","части","частей")}`:""}</div></div>
+    <div style="text-align:center"><div class="bignum" style="font-size:44px">${list.length}</div><div class="muted">${bits} · примерно ${mins} ${plural(mins,"минута","минуты","минут")}</div></div>
     <ol class="plan-list">${kinds.map(([t,d])=>`<li><b>${t}</b><span class="muted small">${d}</span></li>`).join("")}</ol>
     <p class="small muted" style="margin:0">${k>1?"Слова идут небольшими порциями: после знакомства сразу проверка, так запоминается лучше. ":""}Ошибиться не страшно: слово вернётся в конце, и это часть обучения. Выйти можно в любой момент, пройденные слова сохранятся.</p></div>
   <div class="sess-foot"><button class="btn primary" id="planGo" type="button">Поехали</button></div>`;
@@ -1587,7 +1587,7 @@ function resumeSess(){
 function cardOf(id){ return Store.cards.get(id); }
 function front(c){ return S().first==="en" ? {t:c.en, l:"en"} : {t:c.ru, l:"ru"}; }
 function back(c){ return S().first==="en" ? {t:c.ru, l:"ru"} : {t:c.en, l:"en"}; }
-function updateBar(){ const p=sess.total?Math.round(sess.done/sess.total*100):0; sess.maxP=Math.max(sess.maxP||0,p); $("#pbar").style.width=sess.maxP+"%"; const nd=sess.finished?sess.ids.length:doneIdsNow().done.length; $("#sessCount").textContent=nd+" из "+sess.ids.length+" "+plural(sess.ids.length,"слова","слов","слов"); $("#sessCount").title="Слово считается пройденным, когда выполнены все его задания"; }
+function updateBar(){ const p=sess.total?Math.round(sess.done/sess.total*100):0; sess.maxP=Math.max(sess.maxP||0,p); $("#pbar").style.width=sess.maxP+"%";}
 function next(){
   updateBar();
   while(sess.r<sess.rounds.length && !sess.rounds[sess.r].queue.length) sess.r++;
@@ -1608,7 +1608,7 @@ function done(ok, id, requeue=true){
   next();
 }
 const MODE = {intro:"Знакомство", choice:"Выберите перевод", match:"Соедините пары", cloze:"Вставьте пропущенное", letters:"Соберите слово из букв", typing:"Напишите по-английски"};
-function head(type, extra=""){ const k=sess?wavesCount():1, w=(sess?.rounds[sess.r]?.w||0)+1; return `<div class="mode-tag"><span class="label">${MODE[type]}</span>${extra}${k>1?`<span class="chip">часть ${w} из ${k}</span>`:""}</div>`; }
+function head(type, extra=""){ return `<div class="mode-tag"><span class="label">${MODE[type]}</span>${extra}</div>`; }
 const SRC_NAME={tat:"Tatoeba", wik:"Викисловарь", dict:"словарь", ctx:"из вашего примера"};
 const SRC_TIP={tat:"Предложение из Tatoeba: его написали и проверили люди.", wik:"Пример из Викисловаря.", dict:"Пример из словаря.", ctx:"Предложение из примера, на который вы нажали."};
 function srcTag(x, onlyWarn=false){
