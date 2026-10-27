@@ -1176,3 +1176,16 @@ h2[style*="uppercase"],.panel h2{font-family:var(--f-display);font-weight:900;le
 .add-head .btn{width:auto;min-width:104px}
 .add-head .btn:disabled{opacity:.45;cursor:default}
 @media (max-width:759px){ .add-head{grid-template-columns:1fr auto!important} .add-head .btn{width:auto!important} }
+
+/* розовые волны текут через весь фон, слева направо */
+body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!important;width:auto!important;height:auto!important;right:auto;top:auto;
+  background:url(art/bg-waves.svg) center/cover no-repeat!important;opacity:.55;z-index:-1;pointer-events:none;
+  animation:waveFlow 26s ease-in-out infinite alternate!important}
+@keyframes waveFlow{from{transform:translate3d(-2.5%,0,0)}to{transform:translate3d(2.5%,1.5%,0)}}
+@media (max-width:900px),(orientation:portrait){ body::after{background-image:url(art/bg-waves-tall.svg)!important;opacity:.8} }
+:root[data-theme="dark"] body::after{opacity:.18}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) body::after{opacity:.18}}
+@media (prefers-reduced-motion:reduce){body::after{animation:none!important}}
+
+/* волна в карточках: мягкий край вместо среза */
+.prog::before,.welcome::before{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 38%);mask-image:linear-gradient(to right,transparent 0,#000 38%)}
