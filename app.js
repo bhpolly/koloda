@@ -1231,13 +1231,15 @@ function openDupScanner(){
     : `<div class="panel empty muted" style="text-align:center">Дублей не нашлось: у каждого английского слова одна карточка.</div>`;
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Дубли</h2><button class="btn" id="dup-close" type="button">Готово</button></div>${body}`);
   $("#dup-close").onclick=()=>{ closeModal(); renderAll(); };
-  const doMerge=(k,keepId)=>{ const g=allCards().filter(c=>dupKey(c.en)===k); const keep=g.find(c=>c.id===keepId)||bestOf(g); const others=g.filter(c=>c!==keep); mergeInto(keep,others); Store.saveMany([keep]); Store.deleteMany(others.map(c=>c.id)); return others.length; };
+  let snaps=[];
+  const undoMerge=n=>toast(`Объединено: удалено дублей ${n}`, {label:"Отменить", fn:()=>{ Store.restoreMany(snaps); renderAll(); toast("Объединение отменено"); }});
+  const doMerge=(k,keepId)=>{ const g=allCards().filter(c=>dupKey(c.en)===k); const keep=g.find(c=>c.id===keepId)||bestOf(g); const others=g.filter(c=>c!==keep); snaps.push(...g.map(c=>structuredClone(c))); mergeInto(keep,others); Store.saveMany([keep]); Store.deleteMany(others.map(c=>c.id)); return others.length; };
   $("#modalBody").querySelectorAll(".dupgrp").forEach(el=>{
     const k=el.dataset.k;
-    el.querySelector('[data-dg="merge"]').onclick=()=>{ const id=el.querySelector("input:checked")?.value; const n=doMerge(k,id); toast(`Объединено: удалено дублей ${n}`); openDupScanner(); };
+    el.querySelector('[data-dg="merge"]').onclick=()=>{ const id=el.querySelector("input:checked")?.value; snaps=[]; const n=doMerge(k,id); openDupScanner(); undoMerge(n); };
     el.querySelector('[data-dg="skip"]').onclick=()=>{ dupIgnore.add(k); openDupScanner(); };
   });
-  $("#dupAll")?.addEventListener("click",()=>{ let n=0; groups.forEach(([k])=>{ n+=doMerge(k); }); toast(`Объединено: удалено дублей ${n}`); openDupScanner(); });
+  $("#dupAll")?.addEventListener("click",()=>{ let n=0; snaps=[]; groups.forEach(([k])=>{ n+=doMerge(k); }); openDupScanner(); undoMerge(n); });
 }
 $("#dupBtn").onclick=openDupScanner;
 
