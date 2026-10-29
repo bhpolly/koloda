@@ -1,7 +1,7 @@
 /* Колода: офлайн-режим. Сайт открывается без сети из кэша; когда сеть есть, всегда берётся свежая версия.
    Данные (слова) сюда не попадают: они лежат в браузере или в облаке аккаунта. */
-const CACHE = "koloda-shell-v15";
-const SHELL = ["./", "index.html", "app.css", "app.js", "fx.js", "config.js", "manifest.webmanifest",
+const CACHE = "koloda-shell-v16";
+const SHELL = ["./", "index.html", "app.css", "app.js", "course.js", "course/lib.js", "course/u1.js", "course/u2.js", "course/u3.js", "course/u4.js", "course/u5.js", "course/u6.js", "course/u7.js", "course/u8.js", "course/u9.js", "course/u10.js", "fx.js", "config.js", "manifest.webmanifest",
   "vendor/supabase-2.117.3.js", "icons/icon-192.png", "icons/favicon-32.png", "icons/favicon-48.png", "fonts/unbounded-cyrillic-800-normal.woff2", "fonts/unbounded-latin-800-normal.woff2", "fonts/unbounded-cyrillic-900-normal.woff2", "fonts/unbounded-latin-900-normal.woff2", "fonts/marck-script-cyrillic-400-normal.woff2", "fonts/marck-script-latin-400-normal.woff2", "art/wave-pink.svg","art/bg-waves.svg","art/bg-waves-tall.svg", "art/wave-cream.svg", "art/cat.svg",
   "fonts/oswald-cyrillic-600-normal.woff2", "fonts/oswald-cyrillic-700-normal.woff2", "fonts/oswald-latin-600-normal.woff2", "fonts/oswald-latin-700-normal.woff2",
   "fonts/playfair-display-cyrillic-700-italic.woff2", "fonts/playfair-display-latin-700-italic.woff2",

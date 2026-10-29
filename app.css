@@ -984,7 +984,7 @@ input,textarea,select,[contenteditable]{caret-color:var(--ink)}
 .wmenu{background:color-mix(in srgb,var(--bg) 97%,transparent);max-height:min(70vh,560px);overflow:auto}
 
 
-/* ============================================================
+/* =====================================================
    v6 · «Анатомия идеи»: бумага, пудровый розовый, шалфей, горчица.
    Плоские цвета, широкие чёрные заголовки, рукописные акценты.
    ============================================================ */
@@ -1241,3 +1241,58 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 
 /* пометка «машинный» у вариантов перевода */
 .chip.warn{color:var(--bad)}
+=======
+/* ===== Курс по учебнику ===== */
+.crs-h{font-size:clamp(20px,3.4vw,28px);font-weight:800;line-height:1.2;overflow-wrap:anywhere}
+.crs-hero{display:flex;flex-direction:column;gap:14px;background:var(--pink-soft)}
+.crs-prog{display:flex;flex-direction:column;gap:6px}
+.crs-unit{display:flex;flex-direction:column}
+.crs-rows{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.crs-row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;text-align:left;width:100%;border:1.5px solid var(--line);background:var(--surface);border-radius:20px;padding:12px 16px;cursor:pointer;min-height:60px}
+.crs-row:hover{border-color:var(--ink)}
+.crs-row.done{background:var(--accent-soft)}
+.crs-rt{display:flex;flex-direction:column;min-width:0}
+.crs-rt b{font-weight:700;overflow-wrap:anywhere}
+.crs-rt span{color:var(--muted);font-size:13px;overflow-wrap:anywhere}
+.crs-dots{display:inline-flex;gap:4px}
+.crs-dots i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.crs-dots i.on{background:var(--pink-strong)}
+.crs-lt{flex-wrap:nowrap;gap:8px}
+.crs-lt b{overflow-wrap:anywhere;min-width:0}
+.crs-steps{display:flex;flex-direction:column;gap:10px}
+.crs-step{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;text-align:left;width:100%;border:2px solid transparent;background:var(--surface);border-radius:22px;padding:14px 18px;cursor:pointer;min-height:64px}
+.crs-step:hover{border-color:var(--line)}
+.crs-step.next{border-color:var(--pink-strong)}
+.crs-step.done{background:var(--accent-soft)}
+.crs-n{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--surface-2);color:var(--ink)}
+.crs-step.done .crs-n{background:var(--accent);color:var(--accent-ink)}
+.crs-step.next .crs-n{background:var(--pink);color:var(--pink-ink)}
+.crs-st{display:flex;flex-direction:column;min-width:0}
+.crs-st b{font-weight:700}
+.crs-st span{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.crs-go{font-size:12px;font-weight:700;color:var(--muted)}
+.crs-step.next .crs-go{color:var(--pink-strong)}
+.crs-words{display:flex;flex-direction:column;gap:0;padding:8px 22px}
+.crs-w{padding:12px 0;border-bottom:1px solid var(--line)}
+.crs-w:last-child{border-bottom:0}
+.crs-en{font-size:17px;font-weight:800;overflow-wrap:anywhere}
+.crs-ru{color:var(--muted);flex:1;min-width:0;overflow-wrap:anywhere;font-size:14px}
+.crs-ex{margin:4px 0 0 0;font-size:14px}
+.crs-ex .ru{color:var(--muted);font-size:12.5px}
+.crs-pron{display:flex;flex-direction:column;gap:6px;background:var(--surface);border-radius:var(--r);padding:18px 22px}
+.crs-pr{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.crs-pr span{color:var(--muted);font-size:14px}
+.crs-runtop{flex-wrap:nowrap}
+.crs-p{overflow-wrap:anywhere;font-size:clamp(20px,5vw,30px)!important;line-height:1.3}
+.crs-bad{color:var(--bad)}
+.blank{display:inline-block;min-width:3.2em;border-bottom:3px solid var(--pink-strong);text-align:center;color:transparent;line-height:1}
+.crs-built,.crs-bank{display:flex;flex-wrap:wrap;gap:8px;min-height:56px;padding:10px;border-radius:18px;align-content:flex-start}
+.crs-built{background:var(--surface);border:2px dashed var(--line)}
+.crs-built.right{border-color:var(--accent);background:var(--accent-soft)}
+.crs-built.wrong{border-color:var(--pink-strong);background:var(--bad-soft)}
+.tok{border:1.5px solid var(--line);background:var(--surface-2);border-radius:999px;padding:8px 16px;min-height:44px;font-weight:700;font-size:16px;cursor:pointer}
+.tok:hover{border-color:var(--ink)}
+.tok.on{background:var(--pink);border-color:var(--pink);color:var(--pink-ink)}
+.crs-score{display:flex;flex-direction:column;align-items:center;gap:2px}
+.crs-score b{font-family:var(--f-display);font-size:64px;font-weight:800;line-height:1}
+.crs-score span{color:var(--muted);font-weight:600}

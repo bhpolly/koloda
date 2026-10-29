@@ -37,7 +37,7 @@ function showStoreWarn(){
 try{ localStorage.setItem("koloda_probe","1"); localStorage.removeItem("koloda_probe"); }catch{ storageBad=true; }
 
 /* ============ store ============ */
-const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, planSeen:0, sched:0, nick:"", deck:"", goal:10, revCap:40, level:"B1", modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
+const DEFAULTS = { batch:10, first:"en", audio:"en", rate:0.9, voice:"", native:true, mmEmail:"", tourDone:false, planSeen:0, sched:0, nick:"", deck:"", goal:10, revCap:40, level:"B1", course:{}, modes:{choice:true, match:true, letters:true, typing:true, cloze:true} };
 const GUEST = "koloda.";
 const str = (v, max=500) => typeof v==="string" ? v.slice(0,max) : "";
 const numv = v => Number.isFinite(+v) ? +v : 0;
@@ -72,6 +72,7 @@ function sanitizeSettings(s){
   if([15,25,40,60,100].includes(+s.revCap)) o.revCap=+s.revCap;
   if(["A2","B1","B2","C1"].includes(s.level)) o.level=s.level;
   o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.planSeen=Math.max(0,Math.min(9,+s.planSeen||0)); o.sched=Math.max(0,Math.min(9,+s.sched||0)); o.nick=str(s.nick,30).trim(); o.deck=str(s.deck,30);
+  if(s.course&&typeof s.course==="object") for(const [k,v] of Object.entries(s.course).slice(0,80)) if(/^[A-Z0-9]{1,5}$/.test(k)&&Array.isArray(v)) o.course[k]=[0,1,2].map(i=>Math.max(0,Math.min(i===2?7:100,Math.round(numv(v[i])))));
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
@@ -3121,7 +3122,7 @@ document.addEventListener("click",e=>{ const b=e.target.closest("[data-addntag]"
 
 /* ============ routing ============ */
 let view="learn";
-const VIEWS=["learn","words","grammar","stats","prefs"];
+const VIEWS=["learn","words","course","grammar","stats","prefs"];
 function go(v){
   if(!VIEWS.includes(v)) v="learn"; view=v;
   VIEWS.forEach(x=>$("#v-"+x).hidden = x!==v);
@@ -3130,7 +3131,7 @@ function go(v){
   try{ history.replaceState(null,"","#"+v); }catch{}
   renderView(); window.scrollTo(0,0);
 }
-function renderView(){ ({learn:renderLearn, words:renderList, grammar:renderGrammar, stats:renderStats, prefs:renderPrefs})[view](); }
+function renderView(){ ({learn:renderLearn, words:renderList, course:()=>window.renderCourse&&window.renderCourse(), grammar:renderGrammar, stats:renderStats, prefs:renderPrefs})[view](); }
 /* одноразово: подтягиваем сроки старых слов под новые, более короткие интервалы; слова с ошибками возвращаем в повтор */
 function migrateSched(){
   if(S().sched>=3 || !Store.cards.size) return;
