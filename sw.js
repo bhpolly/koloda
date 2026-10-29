@@ -1,13 +1,14 @@
 /* Колода: офлайн-режим. Сайт открывается без сети из кэша; когда сеть есть, всегда берётся свежая версия.
    Данные (слова) сюда не попадают: они лежат в браузере или в облаке аккаунта. */
-const CACHE = "koloda-shell-v17";
-const SHELL = ["./", "index.html", "app.css", "app.js", "course.js", "course/lib.js", "course/u1.js", "course/u2.js", "course/u3.js", "course/u4.js", "course/u5.js", "course/u6.js", "course/u7.js", "course/u8.js", "course/u9.js", "course/u10.js", "fx.js", "config.js", "manifest.webmanifest",
-  "vendor/supabase-2.117.3.js", "icons/icon-192.png", "icons/favicon-32.png", "icons/favicon-48.png", "fonts/unbounded-cyrillic-800-normal.woff2", "fonts/unbounded-latin-800-normal.woff2", "fonts/unbounded-cyrillic-900-normal.woff2", "fonts/unbounded-latin-900-normal.woff2", "fonts/marck-script-cyrillic-400-normal.woff2", "fonts/marck-script-latin-400-normal.woff2", "art/wave-pink.svg","art/bg-waves.svg","art/bg-waves-tall.svg", "art/wave-cream.svg", "art/cat.svg",
-  "fonts/oswald-cyrillic-600-normal.woff2", "fonts/oswald-cyrillic-700-normal.woff2", "fonts/oswald-latin-600-normal.woff2", "fonts/oswald-latin-700-normal.woff2",
-  "fonts/playfair-display-cyrillic-700-italic.woff2", "fonts/playfair-display-latin-700-italic.woff2",
-  "art/blob-green.svg", "art/blob-pink-soft.svg", "art/burst-green.svg", "art/cards.svg", "art/flower.svg", "art/flower-green.svg", "art/flower-white.svg", "art/mascot.svg", "art/sparkle.svg", "art/squiggle.svg",
-  "fonts/montserrat-cyrillic-500-normal.woff2", "fonts/montserrat-cyrillic-600-normal.woff2", "fonts/montserrat-cyrillic-700-normal.woff2", "fonts/montserrat-cyrillic-800-normal.woff2",
-  "fonts/montserrat-latin-500-normal.woff2", "fonts/montserrat-latin-600-normal.woff2", "fonts/montserrat-latin-700-normal.woff2", "fonts/montserrat-latin-800-normal.woff2"];
+const CACHE = "koloda-shell-v20";
+const SHELL = [
+  "./", "index.html", "app.css", "app.js", "course.js", "course/lib.js",
+  "course/u1.js", "course/u2.js", "course/u3.js", "course/u4.js", "course/u5.js", "course/u6.js",
+  "course/u7.js", "course/u8.js", "course/u9.js", "course/u10.js", "fx.js", "config.js",
+  "manifest.webmanifest", "vendor/supabase-2.117.3.js", "icons/icon-192.png", "icons/favicon-32.png", "icons/favicon-48.png", "art/cat.svg",
+  "art/cards.svg", "art/mascot.svg", "fonts/caveat-cyrillic-700-normal.woff2", "fonts/caveat-latin-700-normal.woff2", "fonts/inter-tight-cyrillic-500-normal.woff2", "fonts/inter-tight-cyrillic-600-italic.woff2",
+  "fonts/inter-tight-cyrillic-600-normal.woff2", "fonts/inter-tight-cyrillic-700-normal.woff2", "fonts/inter-tight-cyrillic-800-italic.woff2", "fonts/inter-tight-cyrillic-800-normal.woff2", "fonts/inter-tight-cyrillic-900-normal.woff2", "fonts/inter-tight-latin-500-normal.woff2",
+  "fonts/inter-tight-latin-600-italic.woff2", "fonts/inter-tight-latin-600-normal.woff2", "fonts/inter-tight-latin-700-normal.woff2", "fonts/inter-tight-latin-800-italic.woff2", "fonts/inter-tight-latin-800-normal.woff2", "fonts/inter-tight-latin-900-normal.woff2"];
 
 self.addEventListener("install", e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(u).catch(() => {})))).then(() => self.skipWaiting()));
