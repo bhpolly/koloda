@@ -51,3 +51,7 @@
 
 ### YandexGPT через свой Cloudflare Worker
 Яндекс не разрешает запросы из браузера (CORS), поэтому нужен маленький прокси: `proxy/yandex-worker.js`. Он не хранит ключ и принимает запросы только с сайта Колоды. В настройках Pro выберите «YandexGPT», в поле «Адрес API» вставьте адрес воркера с `/v1` на конце, например `https://koloda-yandex.ИМЯ.workers.dev/v1`.
+
+## Курс по учебнику
+
+Раздел «Курс» — слова, правила и задания по English File 4th ed. Два уровня с переключателем на главном экране курса: **Intermediate** (25 уроков, юниты 1–10) и **Pre-Intermediate** (42 урока: 12 юнитов + 6 Practical English). Уроки лежат в `course/u*.js` и `course/p*.js`, проверка — `node tools/check_course.mjs`.

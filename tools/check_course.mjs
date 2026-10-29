@@ -2,7 +2,7 @@
 import fs from "node:fs"; import vm from "node:vm"; import path from "node:path";
 const dir = new URL("../course/", import.meta.url).pathname;
 const ctx = { }; ctx.window = ctx; vm.createContext(ctx);
-const files = ["lib.js", ...fs.readdirSync(dir).filter(f => /^u\d+\.js$/.test(f)).sort((a, b) => +a.slice(1, -3) - +b.slice(1, -3))];
+const files = ["lib.js", ...fs.readdirSync(dir).filter(f => /^[up]\d+\.js$/.test(f)).sort((a, b) => (a[0] === b[0] ? 0 : a[0] < b[0] ? 1 : -1) || +a.slice(1, -3) - +b.slice(1, -3))];
 for (const f of files) vm.runInContext(fs.readFileSync(path.join(dir, f), "utf8"), ctx, { filename: f });
 const L = ctx.COURSE, errs = [], warn = [], ids = new Set();
 const plain = s => s.replace(/…/g, "").replace(/[?!.]+$/, "").trim();

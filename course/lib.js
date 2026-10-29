@@ -1,6 +1,6 @@
 /* Курс: общие конструкторы заданий. Файлы u1.js … u10.js вызывают COURSE_ADD(({G,P,F,O,T}) => [ …уроки… ]). */
 window.COURSE = [];
-window.COURSE_ADD = build => {
+window.COURSE_ADD = (build, book) => {
   /* G — вписать слово/форму в пропуск ___ ; P — выбрать (первый вариант верный, порядок перемешивается);
      F — исправить ошибку (ввести верное предложение целиком); O — собрать предложение из слов; T — перевести на английский */
   const H = {
@@ -10,5 +10,6 @@ window.COURSE_ADD = build => {
     O: (ru, a, alt) => ({ t: "order", ru, a, alt: alt || [] }),
     T: (ru, a) => ({ t: "tr", ru, a })
   };
-  window.COURSE.push(...build(H));
+  const ls = build(H); if (book) ls.forEach(l => { l.b = book; });
+  window.COURSE.push(...ls);
 };

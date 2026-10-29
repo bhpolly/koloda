@@ -1296,3 +1296,6 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 .crs-score{display:flex;flex-direction:column;align-items:center;gap:2px}
 .crs-score b{font-family:var(--f-display);font-size:64px;font-weight:800;line-height:1}
 .crs-score span{color:var(--muted);font-weight:600}
+.crs-books{display:flex;gap:8px;flex-wrap:wrap}
+.crs-book{border:1.5px solid var(--line);background:var(--surface);border-radius:999px;padding:8px 16px;font:inherit;font-weight:700;font-size:14px;cursor:pointer;min-height:40px}
+.crs-book.on{background:var(--green,#cfe9d4);border-color:transparent}

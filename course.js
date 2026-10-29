@@ -1,15 +1,22 @@
 "use strict";
-/* ============ Курс по English File Intermediate ============
+/* ============ Курс по English File (Intermediate и Pre-Intermediate) ============
    Раздел «Курс»: по каждому уроку учебника — слова, правило, задания и разговорная практика.
    Слова можно добавить в колоду (дальше работают интервальные повторения), правило — в заметки по грамматике.
    Содержание лежит в course/*.js, прогресс — в настройках пользователя (S().course = { "1A":[слова %, грамматика %, флаги] }). */
 (() => {
 const DONE = 80;                       // порог «шаг пройден», %
 const F_VOC = 1, F_RULE = 2, F_SAY = 4; // флаги в прогрессе урока
-const CR = { screen: "home", id: null, run: null };
+const BOOKS = { I: "Intermediate", P: "Pre-Intermediate" };
+let book0 = "I"; try { const b = localStorage.getItem("koloda_crs_book"); if (b && BOOKS[b]) book0 = b; } catch {}
+const CR = { screen: "home", id: null, run: null, book: book0 };
 
-const lessons = () => window.COURSE || [];
-const lessonById = id => lessons().find(l => l.id === id);
+const allL = () => window.COURSE || [];
+const bookOf = l => l.b || "I";
+const lessons = () => allL().filter(l => bookOf(l) === CR.book);
+const lessonById = id => allL().find(l => l.id === id);
+const lab = l => l.pe ? "PE" : l.id.replace(/^P(?=\d)/, "");
+const noteId = l => bookOf(l) === "P" ? "Pre " + l.id.slice(1) : l.id;
+const revKey = u => (CR.book === "P" ? "P" : "") + u;
 const unitList = () => { const m = new Map(); lessons().forEach(l => { if (!m.has(l.u)) m.set(l.u, []); m.get(l.u).push(l); }); return [...m]; };
 const prog = () => (S().course ||= {});
 const pOf = id => { const p = prog()[id]; return Array.isArray(p) ? p : [0, 0, 0]; };
@@ -202,10 +209,10 @@ function finishRun() {
   $("#crsBack").onclick = () => { CR.run = null; CR.screen = isRev ? "home" : "lesson"; renderCourse(true); top(); };
   top();
 }
-function startReview(u) {
-  const ls = (unitList().find(([n]) => n === +u) || [0, []])[1];
+function startReview(k) {
+  const u = parseInt(String(k).replace(/\D/g, ""), 10), ls = (unitList().find(([n]) => n === u) || [0, []])[1];
   const qs = shuffle(ls.flatMap(l => [...vocabQs(l, 6).slice(0, 4), ...grammarQs(l).slice(0, 4)])).slice(0, 24);
-  CR.id = null; startRun("rev", u, qs);
+  CR.id = null; startRun("rev", String(k), qs);
 }
 
 /* ---------- говорим ---------- */
@@ -250,7 +257,7 @@ function addToDeck(l) {
   renderCourse(true);
 }
 function addNote(l) {
-  const title = `${l.id} · ${l.gr.title}`;
+  const title = `${noteId(l)} · ${l.gr.title}`;
   if (allNotes().some(n => n.title === title)) { toast("Эта заметка уже есть в «Грамматике»"); return; }
   const n = sanitizeNote({ title, tags: ["курс", "ef-" + l.id.toLowerCase()], rule: l.gr.rule, examples: l.gr.ex.map(([en, ru]) => ({ en, ru })), mistakes: l.gr.bad.map(([bad, good, why]) => ({ bad, good, why })), mine: "" });
   if (!n) return; Store.saveNote(n); toast("Правило добавлено в «Грамматику»");
@@ -271,7 +278,7 @@ function renderVocab(l) {
   bindBack();
 }
 function renderRule(l) {
-  const g = l.gr, noted = allNotes().some(n => n.title === `${l.id} · ${g.title}`);
+  const g = l.gr, noted = allNotes().some(n => n.title === `${noteId(l)} · ${g.title}`);
   const ex = g.ex.map(([en, ru]) => `<li>${sayBtn(en)}<div><div class="en">${esc(en)}</div><div class="ru">${esc(ru)}</div></div></li>`).join("");
   const bad = g.bad.map(([b, gd, why]) => `<div class="gmis"><span class="gbad">❌ <s>${esc(b)}</s></span><span class="ggood">✅ ${esc(gd)} ${sayBtn(gd)}</span><span class="small muted">${esc(why)}</span></div>`).join("");
   el().innerHTML = `<div class="stack">${lessonTop(l, "rule")}<div class="panel stack"><h3 class="crs-h">${esc(g.title)}</h3><div class="grule">${fmtText(g.rule)}</div></div>
@@ -288,7 +295,7 @@ function renderRule(l) {
 /* ---------- экраны ---------- */
 const dots = l => stepsOf(l).map(s => `<i class="${s.done ? "on" : ""}"></i>`).join("");
 function lessonTop(l, here) {
-  return `<div class="row crs-lt"><button class="btn ghost" id="crsHome" type="button">← Все уроки</button><span class="chip lang">${l.pe ? "PE" : esc(l.id)}</span><b>${esc(l.t)}</b></div>`;
+  return `<div class="row crs-lt"><button class="btn ghost" id="crsHome" type="button">← Все уроки</button><span class="chip lang">${esc(lab(l))}</span><b>${esc(l.t)}</b></div>`;
 }
 function bindBack() { const b = $("#crsHome"); if (b) b.onclick = () => { CR.screen = "home"; CR.id = null; renderCourse(true); top(); }; }
 function goLesson(id) { CR.id = id; CR.screen = "lesson"; renderCourse(true); top(); }
@@ -314,15 +321,16 @@ function renderHome() {
   const doneN = all.filter(lessonDone).length, pct = Math.round(all.reduce((s, l) => s + lessonPct(l), 0) / all.length);
   const cur = all.find(l => !lessonDone(l)) || all[0], curStep = nextStep(cur);
   const unitsHtml = us.map(([u, ls]) => {
-    const dn = ls.filter(lessonDone).length, rev = pOf("R" + u)[0];
+    const dn = ls.filter(lessonDone).length, rev = pOf("R" + revKey(u))[0];
     return `<div class="crs-unit"><div class="sec-head" style="margin-top:0"><h2>Юнит ${u}</h2><span class="chip">${dn} из ${ls.length}</span></div>
-      <div class="crs-rows">${ls.map(l => `<button class="crs-row${lessonDone(l) ? " done" : ""}" type="button" data-l="${l.id}"><span class="chip lang">${l.pe ? "PE" : esc(l.id)}</span><span class="crs-rt"><b>${esc(l.t)}</b><span>${esc(l.ru)}</span></span><span class="crs-dots" aria-label="пройдено шагов: ${stepsOf(l).filter(s => s.done).length} из 5">${dots(l)}</span></button>`).join("")}</div>
-      <div class="row" style="margin-top:10px"><button class="btn" type="button" data-rev="${u}">Повтор юнита ${u}</button>${rev ? `<span class="small muted">лучший результат ${rev}%</span>` : `<span class="small muted">смешанные задания по всем урокам юнита</span>`}</div></div>`;
+      <div class="crs-rows">${ls.map(l => `<button class="crs-row${lessonDone(l) ? " done" : ""}" type="button" data-l="${l.id}"><span class="chip lang">${esc(lab(l))}</span><span class="crs-rt"><b>${esc(l.t)}</b><span>${esc(l.ru)}</span></span><span class="crs-dots" aria-label="пройдено шагов: ${stepsOf(l).filter(s => s.done).length} из 5">${dots(l)}</span></button>`).join("")}</div>
+      <div class="row" style="margin-top:10px"><button class="btn" type="button" data-rev="${revKey(u)}">Повтор юнита ${u}</button>${rev ? `<span class="small muted">лучший результат ${rev}%</span>` : `<span class="small muted">смешанные задания по всем урокам юнита</span>`}</div></div>`;
   }).join("");
-  el().innerHTML = `<div class="stack"><div class="panel crs-hero"><div><div class="label small muted">English File Intermediate</div><h2 class="crs-h" style="margin:2px 0 6px">Курс по учебнику</h2><p class="muted" style="margin:0">Слова, правила и задания по каждому уроку учебника. Новые слова идут в колоду, правила в заметки, а разговорная практика переносит их в жизнь.</p></div>
+  el().innerHTML = `<div class="stack"><div class="panel crs-hero"><div><div class="crs-books" role="tablist" aria-label="Учебник">${Object.entries(BOOKS).map(([k, n]) => `<button type="button" class="crs-book${CR.book === k ? " on" : ""}" data-book="${k}" aria-pressed="${CR.book === k}">${n}</button>`).join("")}</div><div class="label small muted">English File ${BOOKS[CR.book]}</div><h2 class="crs-h" style="margin:2px 0 6px">Курс по учебнику</h2><p class="muted" style="margin:0">Слова, правила и задания по каждому уроку учебника. Новые слова идут в колоду, правила в заметки, а разговорная практика переносит их в жизнь.</p></div>
     <div class="crs-prog"><div class="pbar"><i style="width:${pct}%"></i></div><span class="small muted">пройдено уроков: ${doneN} из ${all.length} · ${pct}%</span></div>
-    <div class="row"><button class="btn primary" id="crsCont" type="button">${doneN ? "Продолжить" : "Начать"}: ${cur.pe ? "PE" : esc(cur.id)} ${esc(cur.t)}</button></div></div>${unitsHtml}</div>`;
+    <div class="row"><button class="btn primary" id="crsCont" type="button">${doneN ? "Продолжить" : "Начать"}: ${esc(lab(cur))} ${esc(cur.t)}</button></div></div>${unitsHtml}</div>`;
   $("#crsCont").onclick = () => { if (curStep) openStep(cur, curStep.k); else goLesson(cur.id); };
+  el().querySelectorAll("[data-book]").forEach(b => b.onclick = () => { CR.book = b.dataset.book; try { localStorage.setItem("koloda_crs_book", CR.book); } catch {} renderCourse(true); });
   el().querySelectorAll("[data-l]").forEach(b => b.onclick = () => goLesson(b.dataset.l));
   el().querySelectorAll("[data-rev]").forEach(b => b.onclick = () => startReview(b.dataset.rev));
 }

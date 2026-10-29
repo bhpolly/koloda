@@ -72,7 +72,7 @@ function sanitizeSettings(s){
   if([15,25,40,60,100].includes(+s.revCap)) o.revCap=+s.revCap;
   if(["A2","B1","B2","C1"].includes(s.level)) o.level=s.level;
   o.voice=str(s.voice,200); o.native=s.native!==false; o.mmEmail=str(s.mmEmail,120); o.tourDone=!!s.tourDone; o.planSeen=Math.max(0,Math.min(9,+s.planSeen||0)); o.sched=Math.max(0,Math.min(9,+s.sched||0)); o.nick=str(s.nick,30).trim(); o.deck=str(s.deck,30);
-  if(s.course&&typeof s.course==="object") for(const [k,v] of Object.entries(s.course).slice(0,80)) if(/^[A-Z0-9]{1,5}$/.test(k)&&Array.isArray(v)) o.course[k]=[0,1,2].map(i=>Math.max(0,Math.min(i===2?7:100,Math.round(numv(v[i])))));
+  if(s.course&&typeof s.course==="object") for(const [k,v] of Object.entries(s.course).slice(0,160)) if(/^[A-Z0-9]{1,5}$/.test(k)&&Array.isArray(v)) o.course[k]=[0,1,2].map(i=>Math.max(0,Math.min(i===2?7:100,Math.round(numv(v[i])))));
   if(s.modes&&typeof s.modes==="object") for(const k of Object.keys(o.modes)) if(k in s.modes) o.modes[k]=!!s.modes[k];
   return o;
 }
