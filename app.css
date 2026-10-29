@@ -1238,3 +1238,6 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 @media (min-width:640px){.g-ex .gcols{display:grid;grid-template-columns:1fr 1fr}}
 #gEdit textarea.input{resize:vertical;line-height:1.5}
 #gActions{gap:12px}
+
+/* пометка «машинный» у вариантов перевода */
+.chip.warn{color:var(--bad)}

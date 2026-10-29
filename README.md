@@ -32,7 +32,7 @@
 - В словари и Tatoeba уходит только само слово, без email и привязки к аккаунту.
 
 ## Источники данных
-- Переводы: [MyMemory](https://mymemory.translated.net).
+- Переводы: [Викисловарь](https://en.wiktionary.org) (написаны людьми, с пометкой), запасной машинный перевод [MyMemory](https://mymemory.translated.net) (всегда с пометкой «машинный»). Если перевода нет, карточку можно сохранить с английским определением.
 - Определения, транскрипция и аудио: [Free Dictionary API](https://dictionaryapi.dev), [Wiktionary](https://en.wiktionary.org).
 - Офлайн-транскрипция для любых слов и фраз: словарь [CMUdict](vendor/cmudict-LICENSE.txt) (`vendor/ipa-us.json.gz`, собирается `tools/build_ipa.mjs`).
 - Частотный список для подбора примеров: [wordfreq](https://github.com/rspeer/wordfreq) (CC BY-SA 4.0), 3000 самых частых слов встроены в страницу.

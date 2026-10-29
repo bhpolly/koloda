@@ -385,7 +385,7 @@ function renderSourceNote(){
   const el=$("#srcNote"); if(!el) return;
   el.innerHTML = SOURCE==="claude"
     ? "Переводы и примеры подбирает Claude."
-    : 'Переводы: <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a> · словарь, транскрипция и аудио: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener">Free Dictionary API</a> · примеры: <a href="https://tatoeba.org" target="_blank" rel="noopener">Tatoeba</a>';
+    : 'Переводы: <a href="https://en.wiktionary.org" target="_blank" rel="noopener">Викисловарь</a>, машинные: <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a> · словарь, транскрипция и аудио: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener">Free Dictionary API</a> · примеры: <a href="https://tatoeba.org" target="_blank" rel="noopener">Tatoeba</a>';
 }
 
 /* Free Dictionary API + MyMemory */
@@ -581,17 +581,104 @@ async function wiktDefs(term){
   const pos=str(secs[0]?.partOfSpeech,40).toLowerCase();
   return {state: secs.length?"ok":"notfound", examples:[...new Set(ex.filter(Boolean))], pos};
 }
+/* текст страницы Викисловаря берём один раз на слово: из него достаём и транскрипцию, и переводы, и определения */
+const wiktCache=new Map();
+function wiktPage(term){
+  const key=norm(term);
+  if(!wiktCache.has(key)){
+    const p=(async()=>{
+      let r, j; try{ r=await fetchT("https://en.wiktionary.org/w/api.php?action=parse&prop=wikitext&format=json&formatversion=2&redirects=1&origin=*&page="+encodeURIComponent(term)); }catch{ return {state:"net", text:""}; }
+      if(!r.ok) return {state:"net", text:""};
+      try{ j=await r.json(); }catch{ return {state:"net", text:""}; }
+      const wt=j?.parse?.wikitext; if(typeof wt!=="string") return {state:"notfound", text:""};
+      return {state:"ok", text:wt};
+    })();
+    wiktCache.set(key,p); p.then(v=>{ if(v.state==="net") wiktCache.delete(key); });
+  }
+  return wiktCache.get(key);
+}
 async function wiktIpa(term){
-  let r, j; try{ r=await fetchT("https://en.wiktionary.org/w/api.php?action=parse&prop=wikitext&format=json&formatversion=2&redirects=1&origin=*&page="+encodeURIComponent(term)); }catch{ return {state:"net", ipa:""}; }
-  if(!r.ok) return {state:"net", ipa:""};
-  try{ j=await r.json(); }catch{ return {state:"net", ipa:""}; }
-  const wt=j?.parse?.wikitext; if(typeof wt!=="string") return {state:"notfound", ipa:""};
-  let en=wt; const a=wt.indexOf("==English=="); if(a>=0){ en=wt.slice(a+10); const b=en.search(/\n==[^=]/); if(b>=0) en=en.slice(0,b); }
+  const pg=await wiktPage(term); if(pg.state!=="ok") return {state:pg.state, ipa:""};
+  const en=wikEnglish(pg.text, true);
   const m=/\{\{IPA\|en\|([^}]*)\}\}/.exec(en); if(!m) return {state:"notfound", ipa:""};
   const p=m[1].split("|").map(x=>x.trim()).find(x=>/^[\/\[].+[\/\]]$/.test(x));
   if(!p) return {state:"notfound", ipa:""};
   return {state:"ok", ipa:"/"+p.slice(1,-1)+"/"};
 }
+/* английский раздел страницы; whole=true: если раздела нет, берём всю страницу (для транскрипции) */
+function wikEnglish(wt, whole=false){
+  const a=wt.indexOf("==English==");
+  if(a<0) return whole ? wt : "";
+  let en=wt.slice(a+11); const b=en.search(/\n==[^=]/); if(b>=0) en=en.slice(0,b);
+  return en;
+}
+/* вики-разметка -> обычный текст: шаблоны {{lb|en|…}}, ссылки [[a|b]], курсив */
+function cleanWiki(t){
+  let s=String(t||"");
+  for(let i=0;i<6 && s.includes("{{");i++){
+    s=s.replace(/\{\{([^{}]*)\}\}/g,(_,inner)=>{
+      const p=inner.split("|").map(x=>x.trim()), name=p[0].toLowerCase();
+      if(["lb","lbl","label","context","cx"].includes(name)){ const labs=p.slice(2).filter(x=>x && !x.includes("=") && !/^(_|and|or|,|;|nocat)$/i.test(x)); return labs.length?"("+labs.join(", ")+")":""; }
+      if(["q","qual","qualifier","i","qf"].includes(name)){ const q=p.slice(1).filter(x=>x&&!x.includes("=")); return q.length?"("+q.join(", ")+")":""; }
+      if(["l","m","link","mention","ll","l-self","m-self","m-lite","l-lite"].includes(name)) return p[3] && !p[3].includes("=") ? p[3] : (p[2]||"");
+      if(["w","pedlink","wikipedia"].includes(name)) return p[2]||p[1]||"";
+      if(["gloss","gl"].includes(name)) return p[1]?"("+p[1]+")":"";
+      if(["non-gloss definition","n-g","ngd","non-gloss"].includes(name)) return p[1]||"";
+      return "";
+    });
+  }
+  return s.replace(/\[\[(?:Category|File|Image):[^\]]*\]\]/gi,"").replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g,"$1")
+    .replace(/<ref[^>]*>[\s\S]*?<\/ref>/g,"").replace(/<[^>]*>/g,"").replace(/'{2,}/g,"").replace(/&nbsp;/g," ")
+    .replace(/\(\s*\)/g,"").replace(/\s+/g," ").trim();
+}
+/* русские переводы из блока Translations: группы по смыслу ({{trans-top|значение}}) */
+function wikTranslations(en){
+  const groups=[];
+  const blocks=en.match(/={3,5}\s*Translations\s*={3,5}[\s\S]*?(?=\n={2,5}[^=]|$)/g)||[];
+  for(const blk of blocks){
+    let gloss="";
+    for(const raw of blk.split("\n")){
+      const line=raw.trim();
+      const tt=/^\{\{trans-top\|(.*?)\}\}$/i.exec(line);
+      if(tt){ gloss=cleanWiki(tt[1].split("|")[0]); continue; }
+      if(/^\{\{trans-top\}\}/i.test(line)){ gloss=""; continue; }
+      const ru=/^\*+\s*Russian\s*:\s*(.*)$/i.exec(line); if(!ru) continue;
+      const terms=[];
+      for(const m of ru[1].matchAll(/\{\{(?:t\+?|t-simple|tt\+?|t-check|t\+check)\|ru\|([^|}]+)/g)){
+        const t=cleanWiki(m[1]).replace(/\u0301/g,""); if(t && !t.includes("=") && isCyr(t) && t.length<=60 && !terms.some(x=>norm(x)===norm(t))) terms.push(t);
+      }
+      if(terms.length){
+        const g=groups.find(x=>x.gloss===gloss);
+        if(g) terms.forEach(t=>{ if(!g.terms.some(x=>norm(x)===norm(t))) g.terms.push(t); }); else groups.push({gloss, terms});
+      }
+    }
+  }
+  return groups;
+}
+const WIK_POS=/^={3,5}\s*(Noun|Proper noun|Verb|Adjective|Adverb|Preposition|Conjunction|Pronoun|Interjection|Determiner|Particle|Phrase|Idiom|Proverb|Prepositional phrase|Numeral|Contraction|Article|Postposition|Phrasal verb)\s*={3,5}$/i;
+/* определения на английском по частям речи */
+function wikDefinitions(en){
+  const defs=[]; let pos="";
+  for(const raw of en.split("\n")){
+    const line=raw.trim(); const h=WIK_POS.exec(line);
+    if(h){ pos=h[1].toLowerCase(); continue; }
+    if(/^={2,5}[^=]/.test(line)){ pos=""; continue; }
+    if(pos && /^#(?![:*#])\s/.test(line)){
+      let d=cleanWiki(line.slice(1)); const lab=/^(\([^)]*\)\s*)+/.exec(d); if(lab) d=d.slice(lab[0].length).trim();
+      d=d.replace(/[:;,\s]+$/,"");
+      if(d.length>=4 && /[a-z]/i.test(d) && !/^(alternative|plural|simple past|past participle|present participle|third-person|obsolete form|misspelling|eye dialect)\b/i.test(d)) defs.push({pos, def:d.slice(0,220), label:lab?lab[0].trim():""});
+    }
+  }
+  return defs;
+}
+/* переводы и определения слова или фразы из Викисловаря */
+async function wiktLearn(term){
+  const pg=await wiktPage(term); if(pg.state!=="ok") return {state:pg.state, groups:[], defs:[]};
+  const en=wikEnglish(pg.text);
+  if(!en) return {state:"notfound", groups:[], defs:[]};
+  return {state:"ok", groups:wikTranslations(en), defs:wikDefinitions(en)};
+}
+const meaningsFromDefs = defs => { const m=new Map(); defs.forEach(d=>{ (m.get(d.pos)||m.set(d.pos,[]).get(d.pos)).push({def:d.def, ex:""}); }); return [...m].map(([pos,ds])=>({pos, defs:ds.slice(0,3)})); };
 
 /* --- Офлайн-словарь произношений (CMU, американский вариант): складываем транскрипцию фразы по словам --- */
 let cmuPromise=null;
@@ -627,22 +714,26 @@ async function enrichInfo(en){
     const core=coreOf(en), words=core.split(/\s+/).filter(Boolean), vars=phraseVariants(en);
     if(!core) return out;
     // всё независимое запрашиваем одновременно: время подбора = самый медленный сервис, а не сумма
-    const [d, wd, wi, t] = await Promise.all([
+    const [d, wd, wi, t, wl] = await Promise.all([
       words.length<=2 ? FREE.dict(core) : Promise.resolve({state:"skip"}),
-      wiktDefs(core), wiktIpa(core), tatoebaExamples(en,3)
+      wiktDefs(core), wiktIpa(core), tatoebaExamples(en,6), wiktLearn(core).catch(()=>({groups:[], defs:[]}))
     ]);
     out.dict=d.state;
     if(d.state==="ok"){ out.ipa=d.ipa; out.pos=d.pos; out.audio=d.audio; out.meanings=d.meanings; if(d.ipa) out.src.ipa="словарь"; }
     out.wik = wd.state==="net"||wi.state==="net" ? "net" : wd.state;
     if(!out.ipa && wi.ipa){ out.ipa=wi.ipa; out.src.ipa="Викисловарь"; }
     if(!out.pos && wd.pos) out.pos=wd.pos;
+    if(!out.meanings?.length && wl.defs?.length){ out.meanings=meaningsFromDefs(wl.defs); if(!out.pos) out.pos=wl.defs[0].pos; }
     if(!out.ipa){ const c=await cmuIpa(core); if(c){ out.ipa=c; out.src.ipa="офлайн-словарь"; } }
-    out.tat=t.state; out.examples=t.items.slice();
-    const add=(list, hitOnly, src)=>{ for(const e of list){ if(out.examples.length>=3) break; const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||out.examples.some(y=>norm(y.en)===norm(x))) continue; out.examples.push({en:x, ru:"", src}); } };
-    if(out.examples.length<3) add(wd.examples, true, "wik");
-    if(out.examples.length<2) add(wd.examples, false, "wik");
-    if(out.examples.length<2 && d.state==="ok") add(d.examples, false, "dict");
-    out.src.ex = out.examples.length ? (t.items.length?"Tatoeba":(wd.examples.length?"Викисловарь":"словарь")) : "";
+    // собираем кандидатов из всех источников и оставляем самые понятные для выбранного уровня
+    out.tat=t.state; const cand=t.items.slice();
+    const add=(list, hitOnly, src)=>{ for(const e of list){ const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||cand.some(y=>norm(y.en)===norm(x))) continue; cand.push({en:x, ru:"", src}); } };
+    add(wd.examples, true, "wik");
+    if(cand.length<2) add(wd.examples, false, "wik");
+    if(cand.length<2 && d.state==="ok") add(d.examples, false, "dict");
+    const pseudo={en};
+    out.examples = cand.map(x=>({x, s:exScore(x,pseudo)})).sort((a,b)=>a.s-b.s).map(o=>o.x).slice(0,5);
+    out.src.ex = out.examples.length ? [...new Set(out.examples.map(x=>SRC_NAME[x.src]).filter(Boolean))].join(", ") : "";
     return out;
   })();
   infoCache.set(key,p);
@@ -747,6 +838,33 @@ async function addManual(){
   }
 }
 
+/* Lite: варианты перевода из открытых источников. Сначала переводы из Викисловаря (их написали люди), потом машинный перевод MyMemory
+   с пометкой. Если перевода нет совсем, предлагаем английские определения: карточку можно сохранить и с ними. */
+async function liteSenses(text){
+  const core=coreOf(text)||text, out=[], seen=new Set();
+  const base=()=>({en:text, ipa:"", pos:"", audio:"", examples:[], free:true, enriched:true});
+  const [mm, wk] = await Promise.all([
+    FREE.translate(text,"en","ru").then(v=>({v}), e=>({e})),
+    wiktLearn(core).catch(()=>({state:"net", groups:[], defs:[]}))
+  ]);
+  for(const g of wk.groups){
+    const terms=g.terms.filter(t=>!seen.has(norm(t))).slice(0,3); if(!terms.length) continue;
+    terms.forEach(t=>seen.add(norm(t)));
+    out.push({...base(), ru:terms.join(", "), def:g.gloss, src:"wik"});
+  }
+  let mmErr=mm.e||null;
+  const addMt=j=>FREE.variants(j, text).forEach(v=>{ if(!seen.has(norm(v)) && out.length<8){ seen.add(norm(v)); out.push({...base(), ru:v, mt:true, src:"mm"}); } });
+  if(mm.v) addMt(mm.v);
+  // глагол без «to»: «end up» MyMemory часто переводит буквально, с «to» обычно точнее
+  if(!mmErr && wk.defs.some(d=>/verb/.test(d.pos)) && !/^to\s/i.test(text.trim())){
+    try{ addMt(await FREE.translate("to "+core,"en","ru")); }catch(e){ mmErr=mmErr||e; }
+  }
+  if(!out.length && wk.defs.length){
+    wk.defs.slice(0,3).forEach(d=>out.push({...base(), ru:"", def:d.def, pos:d.pos, src:"def"}));
+  }
+  if(!out.length && mmErr) throw mmErr;
+  return out;
+}
 async function lookup(){
   const text = addInput.value.trim(); if(!text) { addInput.focus(); return; }
   const lang = isCyr(text) ? "ru" : "en";
@@ -761,8 +879,7 @@ async function lookup(){
     } else if(lang==="en"){
       // варианты перевода показываем сразу, как только ответил переводчик; транскрипция и примеры подтянутся следом
       const infoP = enrichInfo(text);
-      const tr = await FREE.translate(text,"en","ru");
-      senses = FREE.variants(tr, text).map(v=>({en:text, ru:v, ipa:"", pos:"", audio:"", examples:[], free:true, enriched:true}));
+      senses = await liteSenses(text);
       const st0=addState;
       infoP.then(info=>{
         if(addState!==st0) return;
@@ -782,7 +899,7 @@ async function lookup(){
     }
     fromExample=null;
     addState.senses = senses; addState.loading=false;
-    if(!senses.length) addState.error = "Словарь ничего не нашёл. Проверьте написание или введите перевод вручную.";
+    if(!senses.length) addState.error = "Надёжного перевода не нашлось. Проверьте написание или впишите свой перевод (или определение по-английски) в поле выше.";
   }catch(e){
     fromExample=null;
     if(addState?.text!==text) return;
@@ -800,10 +917,12 @@ function renderAdd(){
   if(st.senses?.length){
     h += `<div class="label">${st.lang==="ru"?"Выберите подходящий перевод":"Выберите один или несколько переводов"}</div><div class="senses">`;
     st.senses.forEach((s,i)=>{
-      const main = st.lang==="ru" ? s.en : s.ru;
+      const main = st.lang==="ru" ? s.en : (s.ru || s.def);
+      const srcChip = s.src==="wik" ? `<span class="chip" ${tipAttr("Перевод из Викисловаря: его написали люди.")}>Викисловарь</span>` : s.mt ? `<span class="chip warn" ${tipAttr("Машинный перевод: он может быть неточным. Проверьте, прежде чем сохранять.")}>машинный</span>` : s.src==="def" ? `<span class="chip" ${tipAttr("Перевода не нашлось, но карточку можно сохранить с английским определением.")}>только определение</span>` : s.src==="ai" ? `<span class="chip" ${tipAttr("Подобрано вашей нейросетью.")}>ИИ</span>` : "";
+      const sub = s.meaning || (s.ru && s.def ? s.def : "");
       h += `<button type="button" class="sense" data-sense="${i}" aria-pressed="${(st.picks||[]).includes(i)}">
-        <span class="t">${esc(main)} ${s.pos?`<span class="chip">${esc(s.pos)}</span>`:""} ${s.level?`<span class="chip">${esc(s.level)}</span>`:""}</span>
-        ${s.meaning?`<span class="small muted">${esc(s.meaning)}</span>`:""}
+        <span class="t">${esc(main)} ${s.pos?`<span class="chip">${esc(s.pos)}</span>`:""} ${s.level?`<span class="chip">${esc(s.level)}</span>`:""} ${srcChip}</span>
+        ${sub?`<span class="small muted">${esc(sub)}</span>`:""}
         ${s.examples?.[0] && !s.free?`<span class="ex">${esc(s.examples[0].en)}</span>`:""}
       </button>`;
     });
@@ -2203,7 +2322,7 @@ function renderPrefs(){
   <div class="panel">
     <div class="label" style="margin-bottom:4px">Данные</div>
     <div class="setrow"><div class="lbl"><b>Хранение</b><span>${Store.mode==="claude"?"в вашем аккаунте Claude, видно с любого устройства":Store.mode==="supa"?"в вашем аккаунте, видно на любом устройстве после входа":"только в этом браузере — войдите в аккаунт или делайте резервную копию"}</span></div></div>
-    <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
+    <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"Викисловарь + MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
     ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Email для MyMemory</b><span>Необязательно. Переводчик MyMemory бесплатно переводит около 5 000 символов в день, это примерно 30–50 новых карточек. Если указать email, лимит вырастет до 50 000. Подтверждать почту не нужно, адрес уходит только в MyMemory и сохраняется в ваших настройках.</span></div><input class="input" id="mmEmail" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(s.mmEmail||"")}" style="max-width:260px"></div>`:""}
     ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Подбор переводов и примеров<button class="tip" type="button" aria-label="Пояснение" data-tip="Колода берёт данные из бесплатных сервисов, у которых есть дневные лимиты. Здесь видно, сколько обращений вы сделали сегодня (оценка по этому браузеру), и можно проверить, отвечают ли сервисы.">?</button></b><span>обращения сегодня и проверка источников</span></div><button class="btn" id="diagBtn" type="button">Проверить</button><div id="diagOut" class="small" style="flex-basis:100%">${usageHtml()}</div></div>`:""}
     <div class="setrow"><div class="lbl"><b>Резервная копия</b><span>сохраните колоду файлом или скопируйте как текст; при загрузке более свежий прогресс в колоде не перезаписывается</span></div><div class="row"><button class="btn" id="expFile">Скачать файл</button><button class="btn" id="impFile">Из файла</button><button class="btn" id="exp">Копировать</button><button class="btn" id="imp">Вставить</button></div><input type="file" id="impFileIn" accept=".json,application/json,text/plain" hidden></div>
