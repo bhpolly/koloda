@@ -46,9 +46,9 @@ const normTag = s => String(s??"").trim().replace(/^#+/,"").replace(/\s+/g," ").
 function cleanTags(a){ const out=[]; if(Array.isArray(a)) for(const x of a){ const t=normTag(x); if(t && !out.includes(t)) out.push(t); } return out.slice(0,10); }
 function parseTags(v){ return cleanTags(String(v||"").split(/[,;\n]/)); }
 function sanitizeCard(c){
-  if(!c || typeof c!=="object" || !str(c.en) || !str(c.ru)) return null;
+  if(!c || typeof c!=="object" || !str(c.en) || (!str(c.ru) && !str(c.def))) return null;   // нужен перевод или английское определение
   const id = /^[\w-]{1,64}$/.test(c.id) ? c.id : uid();
-  return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
+  return { id, en:str(c.en,200), ru:str(c.ru,300), def:str(c.def,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
     examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>{ const o={en:str(x?.en,300), ru:str(x?.ru,300)}; if(x?.src) o.src=str(x.src,8); if(x?.mt) o.mt=true; if(x?.pin) o.pin=true; return o; }).filter(x=>x.en),
     created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), errs:Math.max(0,Math.min(999,Math.round(numv(c.errs)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
@@ -329,7 +329,10 @@ function setSync(){
   renderAcct();
 }
 /* ============ cards ============ */
-function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, errs:0, last:0, demo:!!f.demo }; }
+/* «Подпись» слова для упражнений: русский перевод, а если его нет, то английское определение */
+const glossOf = c => c.ru || c.def || "";
+const glossLang = c => c.ru ? "ru" : "en";
+function newCard(f){ return { id:uid(), en:f.en.trim(), ru:(f.ru||"").trim(), def:(f.def||"").trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, errs:0, last:0, demo:!!f.demo }; }
 const status = c => !c.box ? "new" : (c.box>=4 ? "known" : "learning");
 const isDue = c => c.box>0 && c.due <= Date.now();
 const allCards = () => [...Store.cards.values()];
@@ -734,9 +737,8 @@ async function addManual(){
   if(!w){ addInput.focus(); return; }
   const lang=isCyr(w)?"ru":"en";
   if(lang==="ru" && isCyr(tr)){ toast("Для русского слова впишите английский перевод"); $("#addRu").focus(); return; }
-  if(lang==="en" && !isCyr(tr)){ toast("Впишите перевод на русский"); $("#addRu").focus(); return; }
   addState={ text:w, lang, senses:[], sel:-1, picks:[], manual:tr, loading:false, error:null };
-  const en = lang==="ru" ? tr : w;
+  const en = lang==="ru" ? tr : w;   // для английского слова поле принимает русский перевод или определение по-английски
   await saveDraft();
   $("#addRu").value=""; $("#addBtn").disabled=true;
   const c=allCards().find(x=>dupKey(x.en)===dupKey(en));
@@ -792,7 +794,7 @@ function renderAdd(){
   const el = $("#addResult"); const st = addState;
   if(!st){ el.innerHTML=""; return; }
   let h = "";
-  if(st.dup) h += `<div class="feedback no small">Такая карточка уже есть: <b>${esc(st.dup.en)} — ${esc(st.dup.ru)}</b></div>`;
+  if(st.dup) h += `<div class="feedback no small">Такая карточка уже есть: <b>${esc(st.dup.en)} — ${esc(glossOf(st.dup))}</b></div>`;
   if(st.loading) h += `<div class="label">Ищу значения…</div><div class="senses"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`;
   if(st.error) h += `<div class="feedback no small">${esc(st.error)}</div>`;
   if(st.senses?.length){
@@ -807,17 +809,17 @@ function renderAdd(){
     });
     h += `</div>`;
     if(st.meanings?.length){
-      h += `<details class="imp"><summary class="small">Значения в английском словаре</summary><ul class="ex-list small" style="margin-top:8px">${st.meanings.slice(0,4).map(m=>m.defs.slice(0,2).map(d=>`<li><span class="chip">${esc(m.pos)}</span><div>${esc(d.def)}${d.ex?`<div class="ru"><i>${esc(d.ex)}</i></div>`:""}</div></li>`).join("")).join("")}</ul></details>`;
+      h += `<details class="imp"><summary class="small">Значения в английском словаре</summary><ul class="ex-list small" style="margin-top:8px">${st.meanings.slice(0,4).map(m=>m.defs.slice(0,2).map(d=>`<li><span class="chip">${esc(m.pos)}</span><div>${esc(d.def)}${d.ex?`<div class="ru"><i>${esc(d.ex)}</i></div>`:""}<button type="button" class="btn ghost" data-pickdef="${esc(d.def)}" aria-pressed="${st.defPick===d.def}" style="min-height:28px;padding:2px 8px">${st.defPick===d.def?"Определение выбрано":"Взять как определение"}</button></div></li>`).join("")).join("")}</ul></details>`;
     }
   }
   const c = currentDraft();
   const sameEn = c ? findDupEn(c.en) : null;
   if(c){
     const newRu = sameEn ? newRuFor(sameEn, c) : [];
-    if(sameEn) h += `<div class="feedback no small">Слово «${esc(sameEn.en)}» уже есть в колоде (${esc(sameEn.ru)}). ${newRu.length?`Новая карточка не создастся: к существующей добавится перевод «${esc(newRu.join(", "))}» и теги, а прогресс сохранится.`:"Такой перевод уже есть. К существующей карточке добавятся только теги, а прогресс сохранится."}</div>`;
+    if(sameEn) h += `<div class="feedback no small">Слово «${esc(sameEn.en)}» уже есть в колоде (${esc(glossOf(sameEn))}). ${newRu.length?`Новая карточка не создастся: к существующей добавится перевод «${esc(newRu.join(", "))}» и теги, а прогресс сохранится.`:"Такой перевод уже есть. К существующей карточке добавятся только теги, а прогресс сохранится."}</div>`;
     h += `<div class="preview stack" style="gap:10px">
       <div class="row" style="justify-content:space-between;gap:8px"><div><div style="font-size:20px;font-weight:700">${esc(c.en)}</div>
-      <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(c.ru)}</span></div></div>${sayBtn(c.en,"en",false)}</div>
+      <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(glossOf(c))}</span></div>${c.def&&c.ru?`<div class="small muted">${esc(c.def)}</div>`:""}</div>${sayBtn(c.en,"en",false)}</div>
       ${c.examples.length?`<ul class="ex-list">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`
         : `<div class="row small muted">Примеров пока нет. <button type="button" class="btn ghost" id="fetchEx" style="min-height:32px;padding:4px 8px">Подобрать примеры</button></div>`}
       ${st.infoLoading ? `<div class="small muted">Подбираю транскрипцию и примеры…</div>` : (!c.ipa || !c.examples.length) && st.info ? `<div class="small muted">${esc(infoHint(st.info))}</div>` : ""}
@@ -837,6 +839,7 @@ function renderAdd(){
     }
     renderAdd(); if(st.picks.includes(i)) autoSpeak(v.en,"en");
   });
+  el.querySelectorAll("[data-pickdef]").forEach(b=>b.onclick=()=>{ st.defPick = st.defPick===b.dataset.pickdef ? "" : b.dataset.pickdef; renderAdd(); });
   const fe=$("#fetchEx"); if(fe) fe.onclick=fetchManualExamples;
   const sv=$("#saveCard"); if(sv) sv.onclick=saveDraft;
 }
@@ -848,15 +851,16 @@ const newRuFor = (card, d) => ruVariants(d.ru).filter(v=>!ruVariants(card.ru).so
 function currentDraft(){
   const st=addState; if(!st) return null;
   if(st.manual?.trim()){
-    const en = st.lang==="ru" ? st.manual.trim() : st.text, ru = st.lang==="ru" ? st.text : st.manual.trim();
-    return { en, ru, ipa:st.manualEx?.ipa||"", pos:st.manualEx?.pos||"", audio:st.manualEx?.audio||"", examples:st.manualEx?.examples||[] };
+    const m = st.manual.trim(), defOnly = st.lang==="en" && !isCyr(m);
+    const en = st.lang==="ru" ? m : st.text, ru = defOnly ? "" : (st.lang==="ru" ? st.text : m);
+    return { en, ru, def: defOnly ? m : (st.defPick||""), ipa:st.manualEx?.ipa||"", pos:st.manualEx?.pos||"", audio:st.manualEx?.audio||"", examples:st.manualEx?.examples||[] };
   }
   const ps=(st.picks||[]).map(i=>st.senses?.[i]).filter(Boolean);
   if(ps.length){
     const s=ps[0];
     let ru = st.lang==="ru" ? st.text : joinRu(ps.map(x=>x.ru));
     const exs=[]; ps.forEach(x=>(x.examples||[]).forEach(e=>{ if(exs.length<3 && !exs.some(y=>norm(y.en)===norm(e.en))) exs.push(e); }));
-    return { en: s.en, ru, ipa:s.ipa||"", pos:s.pos||"", note:s.meaning||"", audio:s.audio||"", examples:exs };
+    return { en: s.en, ru, def: st.defPick || s.def || "", ipa:s.ipa||"", pos:s.pos||"", note:s.meaning||"", audio:s.audio||"", examples:exs };
   }
   return null;
 }
@@ -887,6 +891,7 @@ async function saveDraft(){
     const before=same.tags.length, add=newRuFor(same,d); let changed=false;
     same.tags=cleanTags([...same.tags,...tags]); if(same.tags.length!==before) changed=true;
     if(add.length){ const nr=joinRu([same.ru,...add]); if(nr!==same.ru){ same.ru=nr; changed=true; } }
+    if(!same.def&&d.def){ same.def=d.def; changed=true; }
     if(!same.ipa&&d.ipa){ same.ipa=d.ipa; changed=true; } if(!same.pos&&d.pos){ same.pos=d.pos; changed=true; } if(!same.audio&&d.audio){ same.audio=d.audio; changed=true; }
     for(const e of d.examples){ if(same.examples.length<5 && e.en && !same.examples.some(y=>norm(y.en)===norm(e.en))){ same.examples.push({...e}); changed=true; } }
     if(changed) Store.saveCard(same);
@@ -916,20 +921,21 @@ function parseImport(text, dry=false){
       a=line.slice(0,i).replace(/[\s\-–—:=]+$/,"").trim(); b=line.slice(i).trim();
     }
     if(!a){ skipped.push([line,"нет слова"]); continue; }
-    let en="", ru="", need=null;
+    let en="", ru="", def="", need=null;
     if(b){
-      if(isCyr(a)===isCyr(b)){ skipped.push([line,"не понял, где слово и где перевод"]); continue; }
-      if(isCyr(a)) [a,b]=[b,a];
-      en=a; ru=b;
+      if(isCyr(a)===isCyr(b)){
+        if(!isCyr(a) && b.split(/\s+/).length>=2){ en=a; def=b; }   // «слово — определение по-английски»
+        else { skipped.push([line,"не понял, где слово и где перевод"]); continue; }
+      } else { if(isCyr(a)) [a,b]=[b,a]; en=a; ru=b; }
     } else if(isCyr(a)){ ru=a; need="en"; }
     else { en=a; need="ru"; }
-    en=en.slice(0,200); ru=ru.slice(0,300);
+    en=en.slice(0,200); ru=ru.slice(0,300); def=def.slice(0,300);
     const key = en ? "e:"+dupKey(en) : "r:"+norm(ru);
     if(seen.has(key) || (en ? haveEn.has(dupKey(en)) : haveRu.has(norm(ru)))){
       const ex = en ? byEn.get(dupKey(en)) : allCards().find(c=>norm(c.ru)===norm(ru));
       if(!dry && ex && tags.length && !seen.has(key)){ const n0=ex.tags.length; ex.tags=cleanTags([...ex.tags,...tags]); if(ex.tags.length!==n0) Store.saveCard(ex); skipped.push([line,"уже есть, тег добавлен"]); seen.add(key); continue; }
       skipped.push([line,"уже есть"]); continue; }
-    seen.add(key); items.push({en, ru, need});
+    seen.add(key); items.push({en, ru, def, need});
   }
   return {items, skipped};
 }
@@ -975,13 +981,13 @@ $("#impBtn").onclick = async ()=>{
     const ready=[];
     const takenEn=new Set(allCards().map(c=>dupKey(c.en))), impTags0=parseTags($("#addTags").value);
     items.forEach(x=>{
-      if(!(x.en && x.ru)){ failed.push([x.en||x.ru,"не удалось подобрать перевод"]); return; }
+      if(!(x.en && (x.ru||x.def))){ failed.push([x.en||x.ru,"не удалось подобрать перевод"]); return; }
       const k=dupKey(x.en);
       if(takenEn.has(k)){ const ex=findDupEn(x.en); if(ex && impTags0.length){ const n0=ex.tags.length; ex.tags=cleanTags([...ex.tags,...impTags0]); if(ex.tags.length!==n0) Store.saveCard(ex); failed.push([x.en,"уже есть, тег добавлен"]); } else failed.push([x.en,"уже есть"]); return; }
       takenEn.add(k); ready.push(x);
     });
     // 2. сразу сохраняем карточки, чтобы ничего не потерялось
-    const impTags=parseTags($("#addTags").value), made=ready.map(x=>newCard({en:x.en, ru:x.ru, tags:impTags}));
+    const impTags=parseTags($("#addTags").value), made=ready.map(x=>newCard({en:x.en, ru:x.ru, def:x.def, tags:impTags}));
     Store.saveMany(made);
     renderList();
     // 3. дополняем транскрипцией, звуком и примерами тем же способом, что и при одиночном добавлении
@@ -1065,7 +1071,7 @@ function reportSkipped(sk){
 
 /* ---- дополнить данные у всей колоды ---- */
 let fillRes=null, fillBusy=false;
-const needsWork = c => !c.ipa || !c.examples.length || (mmLeft()>0 && c.examples.some(x=>!x.ru));
+const needsWork = c => !glossOf(c) || !c.ipa || c.examples.length<MIN_EX || (mmLeft()>0 && c.examples.some(x=>!x.ru));
 function renderFillBox(){ const el=$("#fillBox"); if(el) el.innerHTML=""; }
 async function fillDeck(src){
   if(impBusy||fillBusy) return;
@@ -1077,11 +1083,11 @@ async function fillDeck(src){
   try{ gain=await enrichCards(list, await getSample(), btn); }
   finally{
     const st=impStop; fillBusy=false; impBusy=false; impStop=false;
-    const left=allCards().filter(c=>!c.ipa||!c.examples.length).length, noTr=allCards().filter(c=>c.examples.some(x=>!x.ru)).length;
+    const left=allCards().filter(c=>!glossOf(c)||!c.ipa||c.examples.length<MIN_EX).length, noTr=allCards().filter(c=>c.examples.some(x=>!x.ru)).length;
     const found=gain.ipa+gain.ex>0;
     let msg=found?`Нашлось: транскрипций ${gain.ipa}, примеров ${gain.ex}.`:"На этот раз ничего нового не нашлось.";
     if(st) msg+=" Подбор остановлен.";
-    if(left) msg+=` Без транскрипции или примеров осталось ${left}: возможно, этих слов нет в словарях.`;
+    if(left) msg+=` Не хватает перевода, транскрипции или трёх примеров у ${left}: возможно, этих слов нет в открытых словарях.`;
     if(noTr && mmLeft()<=0) msg+=` Дневной лимит переводчика исчерпан: у ${noTr} ${plural(noTr,"слова","слов","слов")} примеры пока без перевода, их можно добрать завтра.`;
     fillRes=null; toast(msg);
     renderList(); renderLearn();
@@ -1138,7 +1144,7 @@ function filteredCards(){
   else if(filter==="tomorrow"){ const t0=startOfDay()+DAY; list=list.filter(c=>c.box>0&&c.due>=t0&&c.due<t0+DAY); }
   else if(filter==="incomplete") list=list.filter(c=>quality(c).length>0);
   else if(filter!=="all") list=list.filter(c=>status(c)===filter);
-  if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||c.tags.some(t=>t.includes(q)));
+  if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||norm(c.def||"").includes(q)||c.tags.some(t=>t.includes(q)));
   return list.sort(SORTS[sortMode][1]);
 }
 const FILTER_EMPTY={
@@ -1182,7 +1188,7 @@ function renderList(){
     return `<div class="witem">
     <div class="wrow${sel?" selected":""}" role="${selMode?"checkbox":"button"}" ${selMode?`aria-checked="${sel}"`:""} tabindex="0" data-edit="${c.id}">
       ${selMode?`<span class="chk" aria-hidden="true"></span>`:""}${sayBtn(c.en)}
-      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
+      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(glossOf(c))}</span>${c.ru&&c.def?`<span class="small muted">${esc(c.def)}</span>`:""}${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
       <span class="exslot">${has?`<button type="button" class="exbtn${open?" open":""}" data-ex="${c.id}" aria-expanded="${open}" aria-label="Примеры использования" ${tipAttr(open?"Скрыть примеры":"Показать примеры использования ("+has+")")}>${CHEV}</button>`:""}</span>
       <span class="nextdue${isDue(c)?" due":""}">${dueLabel(c)}</span>
       ${boxesHtml(c)}
@@ -1329,7 +1335,9 @@ function mergeInto(keep, others){
     keep.tags=cleanTags([...keep.tags,...o.tags]);
     if(!keep.ipa&&o.ipa) keep.ipa=o.ipa; if(!keep.pos&&o.pos) keep.pos=o.pos; if(!keep.audio&&o.audio) keep.audio=o.audio;
     if(!keep.examples.length&&o.examples.length) keep.examples=o.examples.map(x=>({...x}));
-    if(norm(keep.ru).indexOf(norm(o.ru))<0 && (keep.ru+", "+o.ru).length<=300) keep.ru=keep.ru+", "+o.ru;
+    if(o.ru && !keep.ru) keep.ru=o.ru;
+    else if(o.ru && norm(keep.ru).indexOf(norm(o.ru))<0 && (keep.ru+", "+o.ru).length<=300) keep.ru=keep.ru+", "+o.ru;
+    if(!keep.def&&o.def) keep.def=o.def;
     if(o.box>keep.box){ keep.box=o.box; keep.due=o.due; keep.fails=o.fails; keep.last=Math.max(keep.last,o.last); }
     keep.reps+=o.reps; keep.lapses+=o.lapses; keep.created=Math.min(keep.created,o.created);
   }
@@ -1341,7 +1349,7 @@ function openDupScanner(scopeIds){
   const groups=dupGroups(dupScope?dupScope.map(id=>Store.cards.get(id)).filter(Boolean):null);
   const body=groups.length ? `<p class="small muted" style="margin:0">Одинаковое английское слово или фраза (без учёта регистра, «to», артиклей и скобок). Выберите карточку, которую оставить: теги, транскрипция, примеры и лучший прогресс перенесутся в неё.</p>
     <div class="row" style="justify-content:space-between"><span class="small">Групп: ${groups.length}</span><button class="btn primary" type="button" id="dupAll" ${tipAttr("Объединить все группы: останется карточка с лучшим прогрессом")}>Объединить все</button></div>
-    <div class="stack" style="gap:12px;max-height:50vh;overflow:auto">${groups.map(([k,g],gi)=>{ const keep=bestOf(g); return `<div class="dupgrp" data-k="${esc(k)}"><div class="label">${esc(k)}</div>${g.map(c=>`<label class="duprow"><input type="radio" name="dg${gi}" value="${c.id}" ${c===keep?"checked":""}><span><b>${esc(c.en)}</b> — ${esc(c.ru)}<br><span class="muted small">уровень ${c.box}/7 · примеров: ${c.examples.length}${c.tags.length?" · "+c.tags.map(esc).join(", "):""}</span></span></label>`).join("")}<div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-dg="skip">Не объединять</button><button class="btn primary" type="button" data-dg="merge">Объединить</button></div></div>`; }).join("")}</div>`
+    <div class="stack" style="gap:12px;max-height:50vh;overflow:auto">${groups.map(([k,g],gi)=>{ const keep=bestOf(g); return `<div class="dupgrp" data-k="${esc(k)}"><div class="label">${esc(k)}</div>${g.map(c=>`<label class="duprow"><input type="radio" name="dg${gi}" value="${c.id}" ${c===keep?"checked":""}><span><b>${esc(c.en)}</b> — ${esc(glossOf(c))}<br><span class="muted small">уровень ${c.box}/7 · примеров: ${c.examples.length}${c.tags.length?" · "+c.tags.map(esc).join(", "):""}</span></span></label>`).join("")}<div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-dg="skip">Не объединять</button><button class="btn primary" type="button" data-dg="merge">Объединить</button></div></div>`; }).join("")}</div>`
     : `<div class="panel empty muted" style="text-align:center">Дублей не нашлось: у каждого английского слова одна карточка.</div>`;
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Дубли</h2><button class="btn" id="dup-close" type="button">Готово</button></div>${body}`);
   $("#dup-close").onclick=()=>{ dupScope=null; closeModal(); renderAll(); };
@@ -1382,6 +1390,7 @@ function openEdit(id){
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Карточка</h2>${boxesHtml(c)}</div>
     <label class="f">English<input class="input" id="e-en" value="${esc(c.en)}"></label>
     <label class="f">Русский<input class="input" id="e-ru" value="${esc(c.ru)}"></label>
+    <label class="f"><span>Определение по-английски<button class="tip" type="button" aria-label="Пояснение" data-tip="Необязательно, если есть русский перевод. Если перевода нет, определение показывается вместо него.">?</button></span><input class="input" id="e-def" value="${esc(c.def||"")}" maxlength="300" placeholder="например: to finally be in a particular place or situation"></label>
     <label class="f">Транскрипция<input class="input" id="e-ipa" value="${esc(c.ipa)}"></label>
     <label class="f">Примеры: по одному в строке, «English | перевод». Первая строка — главный пример, он показывается первым<textarea class="input" id="e-ex">${esc(c.examples.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n"))}</textarea></label>
     <div class="tagbox" id="e-tagbox"><label class="f"><span>Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Через запятую. По тегу слова можно фильтровать в списке и учить отдельной подборкой.">?</button></span><input class="input" id="e-tags" autocomplete="off" value="${esc((c.tags||[]).join(", "))}" placeholder="например: работа, поездка" maxlength="200"></label><div class="tagchips"></div></div>
@@ -1408,10 +1417,12 @@ function openEdit(id){
     b.disabled=false;
   };
   $("#e-save").onclick=()=>{
+    const newRu=$("#e-ru").value.trim(), newDef=$("#e-def").value.trim();
+    if(!newRu && !newDef){ toast("Впишите перевод или определение"); return; }
     const newEn=$("#e-en").value.trim()||c.en;
     if(norm(newEn)!==norm(c.en)){ c.audio=""; }   // запись произношения относилась к прежнему слову
     if(pendAudio && !c.audio) c.audio=pendAudio; if(pendPos && !c.pos) c.pos=pendPos;
-    c.en=newEn; c.ru=$("#e-ru").value.trim()||c.ru; c.ipa=$("#e-ipa").value.trim(); c.tags=parseTags($("#e-tags").value);
+    c.en=newEn; c.ru=newRu; c.def=newDef; c.ipa=$("#e-ipa").value.trim(); c.tags=parseTags($("#e-tags").value);
     const old=new Map([...pendEx, ...c.examples].map(x=>[norm(x.en),x]));
     const firstOld=norm(exInit.split("\n")[0]?.split("|")[0]||"");
     c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); const o=old.get(norm(en)), r={en, ru:ru||""}; if(o){ if(o.src) r.src=o.src; if(o.mt && norm(o.ru)===norm(ru||"")) r.mt=true; if(o.pin) r.pin=true; } return r; });
@@ -1566,7 +1577,7 @@ function renderLearn(){
   <div class="sec-head"><h2>Все слова</h2>${cs.length?`<button class="pill-link" data-go="words">Открыть список · ${cs.length}</button>`:""}</div>
   <div class="grid2">
     ${!cs.length?`<div class="panel stack" style="grid-column:1/-1"><div><b>Пока в колоде нет слов</b><div class="small muted">Добавьте своё слово или список, либо загрузите 8 готовых слов, чтобы посмотреть, как всё работает.</div></div><div class="row"><button class="btn primary" type="button" data-go="words">Добавить слово</button><button class="btn" type="button" id="demoBtn">8 слов для пробы</button></div></div>`:""}
-    ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
+    ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(glossOf(c))}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>
 `;
   el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startPractice());
@@ -1696,8 +1707,18 @@ function resumeSess(){
   next();
 }
 function cardOf(id){ return Store.cards.get(id); }
-function front(c){ return S().first==="en" ? {t:c.en, l:"en"} : {t:c.ru, l:"ru"}; }
-function back(c){ return S().first==="en" ? {t:c.ru, l:"ru"} : {t:c.en, l:"en"}; }
+function front(c){ return S().first==="en" ? {t:c.en, l:"en"} : {t:glossOf(c), l:glossLang(c)}; }
+function back(c){ return S().first==="en" ? {t:glossOf(c), l:glossLang(c)} : {t:c.en, l:"en"}; }
+const shownText = (c, x) => x.t===c.en ? x.t : maskDef(c, x.t);
+/* определение без русского перевода: слово в нём закрываем, иначе ответ виден сразу */
+function maskDef(c, t=glossOf(c)){
+  if(c.ru) return t;
+  const core=coreOf(c.en).trim(); if(!core) return t;
+  const forms=core.split(/\s+/).filter(w=>w.length>2).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  if(!forms.length) return t;
+  const stems=forms.map(w=>w.length>4?w.slice(0,-1):w);
+  return String(t).replace(new RegExp("\\b(?:"+stems.join("|")+")[a-z]*","gi"),"…");
+}
 function updateBar(){ const p=sess.total?Math.round(sess.done/sess.total*100):0; sess.maxP=Math.max(sess.maxP||0,p); $("#pbar").style.width=sess.maxP+"%";}
 function next(){
   updateBar();
@@ -1747,10 +1768,11 @@ function addFromExample(w, sentence){
   go("words"); addInput.value=w; addInput.dispatchEvent(new Event("input")); scrollTo(0,0); lookup();
 }
 function bindXw(el){ el.querySelectorAll("[data-xw]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); hideTip(); addFromExample(b.dataset.xw, b.closest(".en").textContent); }); }
+const MIN_EX = 3;   // цель: у каждого слова перевод (или определение) и минимум три примера
 function quality(c){
-  const m=[]; if(!c.ipa) m.push("транскрипция");
+  const m=[]; if(!glossOf(c)) m.push("перевод"); if(!c.ipa) m.push("транскрипция");
   if(!c.examples.length) m.push("примеры");
-  else { if(c.examples.length<2) m.push("второй пример"); if(c.examples.some(x=>!x.ru)) m.push("перевод примеров"); else if(c.examples.every(x=>x.mt)) m.push("проверка перевода примеров"); }
+  else { if(c.examples.length<MIN_EX) m.push("примеров меньше "+MIN_EX); if(c.examples.some(x=>!x.ru)) m.push("перевод примеров"); else if(c.examples.every(x=>x.mt)) m.push("проверка перевода примеров"); }
   return m;
 }
 const body = () => $("#sessBody");
@@ -1793,31 +1815,34 @@ function stepIntro(round, id){
 /* неверные варианты похожи на ответ по форме (часть речи, «to», длина, число слов), поэтому угадать по виду нельзя;
    слова с тем же русским переводом (to hire / to rent) в варианты не берём: ответ был бы неоднозначным */
 function distractors(c, key, n=3){
-  const base=String(c[key]), isTo=/^to\s/i.test(base), len=base.length, wc=base.split(/\s+/).length, mine=ruVariants(c.ru).map(norm);
+  const get = x => key==="en" ? x.en : glossOf(x);   // key: "en" (слово) или "g" (перевод/определение)
+  const base=String(get(c)), isTo=/^to\s/i.test(base), len=base.length, wc=base.split(/\s+/).length, mine=ruVariants(c.ru).map(norm);
   const clash=x=>ruVariants(x.ru).some(v=>mine.includes(norm(v)));
   const score=x=>{
-    const v=String(x[key]); let sc=Math.abs(v.length-len)/Math.max(len,6)*2 + Math.abs(v.split(/\s+/).length-wc)*0.7;
+    const v=String(get(x)); let sc=Math.abs(v.length-len)/Math.max(len,6)*2 + Math.abs(v.split(/\s+/).length-wc)*0.7;
     if(key==="en"){ if(/^to\s/i.test(v)!==isTo) sc+=3; if(x.pos && c.pos && x.pos!==c.pos) sc+=1; }
     if(sess.ids.includes(x.id)) sc-=0.8;
     return sc+Math.random()*1.2;
   };
-  const pool=allCards().filter(x=>x.id!==c.id && norm(x[key])!==norm(base) && !clash(x)).map(x=>[score(x),x]).sort((a,b)=>a[0]-b[0]).map(p=>p[1]);
+  const pool=allCards().filter(x=>x.id!==c.id && get(x) && (key==="en" || glossLang(x)===glossLang(c)) && norm(get(x))!==norm(base) && !clash(x)).map(x=>[score(x),x]).sort((a,b)=>a[0]-b[0]).map(p=>p[1]);
   const out=[]; const seen=new Set([norm(base)]);
-  for(const x of [...pool, ...shuffle(FILLER)]){ const v=x[key]; if(!seen.has(norm(v))){ seen.add(norm(v)); out.push(v); } if(out.length>=n) break; }
+  for(const x of [...pool, ...(key==="en"||glossLang(c)==="ru" ? shuffle(FILLER) : [])]){ const v=key==="en"?x.en:glossOf(x); if(!seen.has(norm(v))){ seen.add(norm(v)); out.push(v); } if(out.length>=n) break; }
   return out;
 }
 function stepChoice(round, id){
   const c=cardOf(id);
-  const ask = round.dir==="fwd" ? front(c) : back(c);
-  const ans = round.dir==="fwd" ? back(c) : front(c);
-  const key = ans.l;
+  let ask = round.dir==="fwd" ? front(c) : back(c);
+  let ans = round.dir==="fwd" ? back(c) : front(c);
+  if(!c.ru && ans.t!==c.en) [ask, ans] = [ans, ask];   // у карточки только определение: всегда угадываем слово по определению
+  const key = ans.t===c.en ? "en" : "g";
+  const askT = ask.t===c.en ? ask.t : maskDef(c, ask.t);
   const opts = shuffle([ans.t, ...distractors(c, key)]);
   body().innerHTML = head("choice") + `
-  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="word">${esc(ask.t)}</div>${sayBtn(ask.t,ask.l,false)}</div>${c.ipa&&ask.l==="en"?`<div class="ipa">${esc(c.ipa)}</div>`:""}</div>
+  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="word">${esc(askT)}</div>${ask.t===c.en||c.ru?sayBtn(ask.t,ask.l,false):""}</div>${c.ipa&&ask.t===c.en?`<div class="ipa">${esc(c.ipa)}</div>`:""}</div>
   <div class="opts">${opts.map((o,i)=>`<button class="opt" data-o="${i}"><kbd>${i+1}</kbd><span>${esc(o)}</span></button>`).join("")}</div>
   <div class="row" style="justify-content:center"><button type="button" class="btn ghost" id="idk">Не помню</button></div>
   <div id="fb"></div>`;
-  if(ask.l==="en") autoSpeak(ask.t,"en");
+  if(ask.t===c.en) autoSpeak(ask.t,"en");
   const wrongShown=()=>{
     $("#idk").disabled=true;
     $("#fb").innerHTML=`<div class="feedback no">Правильно: <b>${esc(ans.t)}</b>. Слово вернётся в конце раунда.</div><div class="sess-foot"><button class="btn primary" id="go">Дальше</button></div>`;
@@ -1841,8 +1866,8 @@ function stepMatch(round, group){
   const left=shuffle(cs), right=shuffle(cs);
   let sel=null, left_n=cs.length; const err=new Set();
   body().innerHTML = head("match", `<span class="chip">${cs.length} ${plural(cs.length,"пара","пары","пар")}</span>`) + `
-  <div class="match"><div class="col">${left.map(c=>`<button class="mitem" data-l="${c.id}">${esc(front(c).t)}</button>`).join("")}</div>
-  <div class="col">${right.map(c=>`<button class="mitem" data-r="${c.id}">${esc(back(c).t)}</button>`).join("")}</div></div>`;
+  <div class="match"><div class="col">${left.map(c=>`<button class="mitem" data-l="${c.id}">${esc(shownText(c,front(c)))}</button>`).join("")}</div>
+  <div class="col">${right.map(c=>`<button class="mitem" data-r="${c.id}">${esc(shownText(c,back(c)))}</button>`).join("")}</div></div>`;
   const B=body();
   B.querySelectorAll("[data-l]").forEach(b=>b.onclick=()=>{ B.querySelectorAll("[data-l]").forEach(x=>x.classList.remove("sel")); sel=b.dataset.l; b.classList.add("sel"); const c=cardOf(sel); if(front(c).l==="en") autoSpeak(c.en,"en"); });
   B.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{
@@ -1874,7 +1899,7 @@ function stepLetters(round, id){
   let tiles = shuffle(letterIdx.map((i,k)=>({k, ch:chars[i].toLowerCase()})));
   let pos=0, errors=0, wrongInRow=0;
   body().innerHTML = head("letters") + `
-  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div>${contextHtml(c)}</div>
+  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(maskDef(c))}</div>${c.ru?sayBtn(c.ru,"ru"):""}</div>${contextHtml(c)}</div>
   <div class="slots" id="slots" style="--n:${Math.max(6,...target.split(/\s+/).map(w=>[...w].length))}">${(()=>{ let o="", cur=""; const flush=()=>{ if(cur){ o+=`<span class="swd">${cur}</span>`; cur=""; } }; chars.forEach((ch,i)=>{ if(ch===" "){ flush(); o+=`<span class="slot gap"></span>`; } else cur+= isL(ch) ? `<span class="slot" data-s="${i}"></span>` : `<span class="slot fixed">${esc(ch)}</span>`; }); flush(); return o; })()}</div>
   <div class="tiles" id="tiles"></div><div id="fb"></div>`;
   const renderTiles=()=>{ $("#tiles").innerHTML = tiles.map(t=>`<button class="tile" data-k="${t.k}">${esc(t.ch)}</button>`).join(""); $("#tiles").querySelectorAll("[data-k]").forEach(b=>b.onclick=()=>press(b)); };
@@ -1902,7 +1927,7 @@ function stepCloze(round, id){
   const {x,m}=cz, sen=x.en, before=sen.slice(0,m.index), after=sen.slice(m.index+m.text.length), target=m.text;
   let hinted=false;
   body().innerHTML = head("cloze") + `
-  <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div></div>
+  <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(maskDef(c))}</div>${c.ru?sayBtn(c.ru,"ru"):""}</div></div>
   <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="впишите слово" aria-label="Пропущенное слово">
   <button class="btn primary wide" type="submit" id="check">Проверить</button><div class="row hintrow"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div></form>
   <div id="fb"></div>`;
@@ -1945,7 +1970,7 @@ function stepTyping(round, id){
   const c=cardOf(id), target=c.en;
   let hinted=false;
   body().innerHTML = head("typing") + `
-  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div>${contextHtml(c)}</div>
+  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(maskDef(c))}</div>${c.ru?sayBtn(c.ru,"ru"):""}</div>${contextHtml(c)}</div>
   <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="по-английски" aria-label="Ответ по-английски">
   <button class="btn primary wide" type="submit" id="check">Проверить</button><div class="row hintrow"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div></form>
   <div id="fb"></div>`;
@@ -2116,7 +2141,7 @@ function renderStats(){
   </div>
   <div class="panel stack" style="gap:8px">
     <div class="label">Топ-10 трудных слов${tip(TIPS.top)}</div>
-    ${top.length? top.map((c,i)=>`<div class="row" style="justify-content:space-between"><span><span class="muted">${i+1}.</span> <b>${esc(c.en)}</b> <span class="muted">— ${esc(c.ru)}</span></span><span class="chip">${c.errs} ${plural(c.errs,"ошибка","ошибки","ошибок")}</span></div>`).join("") : `<div class="muted small">Пока пусто: сюда попадут слова, в которых вы чаще всего ошибаетесь.</div>`}
+    ${top.length? top.map((c,i)=>`<div class="row" style="justify-content:space-between"><span><span class="muted">${i+1}.</span> <b>${esc(c.en)}</b> <span class="muted">— ${esc(glossOf(c))}</span></span><span class="chip">${c.errs} ${plural(c.errs,"ошибка","ошибки","ошибок")}</span></div>`).join("") : `<div class="muted small">Пока пусто: сюда попадут слова, в которых вы чаще всего ошибаетесь.</div>`}
   </div>`;
 }
 
