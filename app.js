@@ -384,8 +384,9 @@ const AI_CFG_KEY="koloda_ai", AI_SESSION_KEY="koloda_ai_key";
 const AI_PROVIDERS = {
   openai:{label:"OpenAI-совместимый", base:"https://api.openai.com/v1", model:"gpt-4o-mini"},
   anthropic:{label:"Anthropic (Claude)", base:"https://api.anthropic.com", model:"claude-haiku-5-5"},
+  yandex:{label:"YandexGPT (Yandex Cloud)", base:"https://llm.api.cloud.yandex.net/v1", model:"gpt://ВАШ_FOLDER_ID/yandexgpt/latest"},
 };
-const AI_HOSTS = ["api.openai.com","api.anthropic.com","openrouter.ai","generativelanguage.googleapis.com"];
+const AI_HOSTS = ["api.openai.com","api.anthropic.com","openrouter.ai","generativelanguage.googleapis.com","llm.api.cloud.yandex.net"];
 function parseAiJson(text){
   const t=String(text).trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
   const i=t.search(/[\[{]/); if(i<0) throw {code:"ai_parse"};
@@ -416,7 +417,7 @@ const AI = {
     try{
       r = cfg.provider==="anthropic"
         ? await fetch(base+"/v1/messages",{method:"POST",signal:ac.signal,headers:{"content-type":"application/json","x-api-key":cfg.key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:cfg.model,max_tokens:4096,messages:[{role:"user",content:prompt}]})})
-        : await fetch(base+"/chat/completions",{method:"POST",signal:ac.signal,headers:{"content-type":"application/json","authorization":"Bearer "+cfg.key},body:JSON.stringify({model:cfg.model,messages:[{role:"user",content:prompt}]})});
+        : await fetch(base+"/chat/completions",{method:"POST",signal:ac.signal,headers:{"content-type":"application/json","authorization":(cfg.provider==="yandex"?"Api-Key ":"Bearer ")+cfg.key},body:JSON.stringify({model:cfg.model,messages:[{role:"user",content:prompt}]})});
     }catch{ throw {code:"ai_net"}; } finally{ clearTimeout(t); }
     if(r.status===401||r.status===403) throw {code:"ai_auth"};
     if(r.status===429) throw {code:"rate_limited"};
@@ -2508,6 +2509,7 @@ function bindAiPanel(){
     let key=$("#aiKey").value.replace(/\s+/g,""); if(!key){ const cur=AI.load(); if(cur && cur.provider===prov) key=cur.key; }
     if(!base){ msg.textContent="Адрес не разрешён. Допустимые сервисы: "+AI_HOSTS.join(", ")+"."; return; }
     if(!model){ msg.textContent="Укажите модель."; return; }
+    if(prov==="yandex" && !/^gpt:\/\/[a-z0-9]{10,}\/[\w.-]+(\/[\w.-]+)?$/i.test(model)){ msg.textContent="Для YandexGPT модель пишется так: gpt://ИДЕНТИФИКАТОР_КАТАЛОГА/yandexgpt/latest. Идентификатор каталога (folder id) есть в консоли Yandex Cloud."; return; }
     if(!key){ msg.textContent="Вставьте ключ."; return; }
     if(/[^\x21-\x7e]/.test(key)){ msg.textContent="В ключе есть лишние символы. Скопируйте его ещё раз."; return; }
     btn.disabled=true; msg.textContent="Проверяю связь…";
