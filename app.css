@@ -1250,3 +1250,6 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 .ivin{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);white-space:nowrap}
 .ivin .input{width:84px;min-height:40px;text-align:center}
 @media (hover:none){ .witem:hover{background:none} .witem:hover .exbtn{background:var(--surface-2)} .exbtn:hover{background:var(--surface-2)!important} .exbtn.open:hover{background:var(--accent)!important} }
+
+/* пометка «машинный» у вариантов перевода */
+.chip.warn{color:var(--bad)}

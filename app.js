@@ -58,9 +58,9 @@ const normTag = s => String(s??"").trim().replace(/^#+/,"").replace(/\s+/g," ").
 function cleanTags(a){ const out=[]; if(Array.isArray(a)) for(const x of a){ const t=normTag(x); if(t && !out.includes(t)) out.push(t); } return out.slice(0,10); }
 function parseTags(v){ return cleanTags(String(v||"").split(/[,;\n]/)); }
 function sanitizeCard(c){
-  if(!c || typeof c!=="object" || !str(c.en) || !str(c.ru)) return null;
+  if(!c || typeof c!=="object" || !str(c.en) || (!str(c.ru) && !str(c.def))) return null;   // нужен перевод или английское определение
   const id = /^[\w-]{1,64}$/.test(c.id) ? c.id : uid();
-  return { id, en:str(c.en,200), ru:str(c.ru,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
+  return { id, en:str(c.en,200), ru:str(c.ru,300), def:str(c.def,300), ipa:str(c.ipa,100), pos:str(c.pos,40), note:str(c.note,200), audio:str(c.audio,300), tags:cleanTags(c.tags),
     examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>{ const o={en:str(x?.en,300), ru:str(x?.ru,300)}; if(x?.src) o.src=str(x.src,8); if(x?.mt) o.mt=true; if(x?.pin) o.pin=true; return o; }).filter(x=>x.en),
     created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), errs:Math.max(0,Math.min(999,Math.round(numv(c.errs)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
@@ -342,7 +342,10 @@ function setSync(){
   renderAcct();
 }
 /* ============ cards ============ */
-function newCard(f){ return { id:uid(), en:f.en.trim(), ru:f.ru.trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, errs:0, last:0, demo:!!f.demo }; }
+/* «Подпись» слова для упражнений: русский перевод, а если его нет, то английское определение */
+const glossOf = c => c.ru || c.def || "";
+const glossLang = c => c.ru ? "ru" : "en";
+function newCard(f){ return { id:uid(), en:f.en.trim(), ru:(f.ru||"").trim(), def:(f.def||"").trim(), ipa:f.ipa||"", pos:f.pos||"", note:f.note||"", audio:f.audio||"", examples:f.examples||[], tags:cleanTags(f.tags), created:Date.now(), box:0, due:0, reps:0, lapses:0, fails:0, errs:0, last:0, demo:!!f.demo }; }
 const status = c => !c.box ? "new" : (c.box>=4 ? "known" : "learning");
 const isDue = c => c.box>0 && c.due <= Date.now();
 const allCards = () => [...Store.cards.values()];
@@ -387,15 +390,78 @@ document.addEventListener("click", e=>{ const b=e.target.closest("[data-say]"); 
 const sayBtn = (text, lang="en", sm=true) => `<button type="button" class="icon-btn${sm?" sm":""}" data-say="${esc(text)}" data-lang="${lang}" aria-label="Произнести">${SPK}</button>`;
 
 /* ============ lookup sources ============ */
+/* ===== Pro: своя нейросеть пользователя =====
+   Ключ хранится только в этом браузере (на время сессии или, по желанию, на устройстве) и никогда не уходит в облако Колоды.
+   Запросы идут напрямую к выбранному сервису. Допустимые адреса те же, что разрешены в Content-Security-Policy (index.html). */
+const AI_CFG_KEY="koloda_ai", AI_SESSION_KEY="koloda_ai_key";
+const AI_PROVIDERS = {
+  openai:{label:"OpenAI-совместимый", base:"https://api.openai.com/v1", model:"gpt-4o-mini"},
+  anthropic:{label:"Anthropic (Claude)", base:"https://api.anthropic.com", model:"claude-haiku-5-5"},
+};
+const AI_HOSTS = ["api.openai.com","api.anthropic.com","openrouter.ai","generativelanguage.googleapis.com"];
+function parseAiJson(text){
+  const t=String(text).trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
+  const i=t.search(/[\[{]/); if(i<0) throw {code:"ai_parse"};
+  const j=t.lastIndexOf(t[i]==="{"?"}":"]"); if(j<i) throw {code:"ai_parse"};
+  try{ return JSON.parse(t.slice(i,j+1)); }catch{ throw {code:"ai_parse"}; }
+}
+const AI = {
+  raw(){ const c=lsGet(AI_CFG_KEY,null); return c && typeof c==="object" && AI_PROVIDERS[c.provider] ? c : null; },
+  load(){
+    const c=this.raw(); if(!c) return null;
+    let key=""; try{ key = c.remember ? str(c.key,300) : (sessionStorage.getItem(AI_SESSION_KEY)||""); }catch{}
+    if(!key) return null;
+    const d=AI_PROVIDERS[c.provider];
+    return {provider:c.provider, base:str(c.base,200)||d.base, model:str(c.model,100)||d.model, key, remember:!!c.remember};
+  },
+  save(c){
+    const rec={provider:c.provider, base:c.base, model:c.model, remember:!!c.remember}; if(c.remember) rec.key=c.key;
+    lsSet(AI_CFG_KEY, rec);
+    try{ if(c.remember) sessionStorage.removeItem(AI_SESSION_KEY); else sessionStorage.setItem(AI_SESSION_KEY,c.key); }catch{}
+  },
+  clear(){ try{ localStorage.removeItem(AI_CFG_KEY); sessionStorage.removeItem(AI_SESSION_KEY); }catch{} },
+  forgetSession(){ try{ sessionStorage.removeItem(AI_SESSION_KEY); }catch{} },
+  allowedBase(base){ try{ const u=new URL(base); return u.protocol==="https:" && AI_HOSTS.includes(u.hostname) ? u.href.replace(/\/+$/,"") : null; }catch{ return null; } },
+  async call(cfg, prompt){
+    const base=this.allowedBase(cfg.base); if(!base) throw {code:"ai_host"};
+    const ac=new AbortController(), t=setTimeout(()=>ac.abort(), 90000);
+    let r;
+    try{
+      r = cfg.provider==="anthropic"
+        ? await fetch(base+"/v1/messages",{method:"POST",signal:ac.signal,headers:{"content-type":"application/json","x-api-key":cfg.key,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:cfg.model,max_tokens:4096,messages:[{role:"user",content:prompt}]})})
+        : await fetch(base+"/chat/completions",{method:"POST",signal:ac.signal,headers:{"content-type":"application/json","authorization":"Bearer "+cfg.key},body:JSON.stringify({model:cfg.model,messages:[{role:"user",content:prompt}]})});
+    }catch{ throw {code:"ai_net"}; } finally{ clearTimeout(t); }
+    if(r.status===401||r.status===403) throw {code:"ai_auth"};
+    if(r.status===429) throw {code:"rate_limited"};
+    if(r.status===404) throw {code:"ai_model"};
+    if(!r.ok) throw {code:"ai_http", status:r.status};
+    let j; try{ j=await r.json(); }catch{ throw {code:"ai_parse"}; }
+    return String(cfg.provider==="anthropic" ? (j?.content||[]).map(b=>b?.text||"").join("") : (j?.choices?.[0]?.message?.content||""));
+  },
+  async json(cfg, prompt){ return parseAiJson(await this.call(cfg, prompt)); },
+  sample(){ const cfg=this.load(); return cfg ? { json:(prompt)=>this.json(cfg, prompt) } : null; },
+};
 let samplePromise=null;
-const getSample = () => (samplePromise ||= (window.claude?.use ? claude.use("sample") : Promise.resolve(null)));
-let SOURCE = window.claude?.use ? "claude" : "free"; // уточняется после getSample()
-getSample().then(s=>{ SOURCE = s ? "claude" : "free"; renderSourceNote(); if(view==="prefs") renderPrefs(); });
+const getSample = async () => {
+  if(window.claude?.use){ samplePromise ||= claude.use("sample"); const s=await samplePromise; if(s) return s; }
+  return AI.sample();
+};
+let SOURCE = window.claude?.use ? "claude" : "free"; // claude — внутри Claude, ai — своя нейросеть, free — открытые источники
+async function refreshSource(){
+  await null;   // сначала дочитывается весь скрипт: функции ниже используют переменные, объявленные позже
+  let kind="free";
+  if(window.claude?.use){ samplePromise ||= claude.use("sample"); if(await samplePromise) kind="claude"; }
+  if(kind==="free" && AI.load()) kind="ai";
+  SOURCE=kind; renderSourceNote(); if(view==="prefs") renderPrefs();
+}
+refreshSource();
 function renderSourceNote(){
   const el=$("#srcNote"); if(!el) return;
   el.innerHTML = SOURCE==="claude"
     ? "Переводы и примеры подбирает Claude."
-    : 'Переводы: <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a> · словарь, транскрипция и аудио: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener">Free Dictionary API</a> · примеры: <a href="https://tatoeba.org" target="_blank" rel="noopener">Tatoeba</a>';
+    : SOURCE==="ai"
+    ? "Переводы и примеры подбирает ваша нейросеть, недостающее добирается из открытых источников."
+    : 'Переводы: <a href="https://en.wiktionary.org" target="_blank" rel="noopener">Викисловарь</a>, машинные: <a href="https://mymemory.translated.net" target="_blank" rel="noopener">MyMemory</a> · словарь, транскрипция и аудио: <a href="https://dictionaryapi.dev" target="_blank" rel="noopener">Free Dictionary API</a> · примеры: <a href="https://tatoeba.org" target="_blank" rel="noopener">Tatoeba</a>';
 }
 
 /* Free Dictionary API + MyMemory */
@@ -591,17 +657,104 @@ async function wiktDefs(term){
   const pos=str(secs[0]?.partOfSpeech,40).toLowerCase();
   return {state: secs.length?"ok":"notfound", examples:[...new Set(ex.filter(Boolean))], pos};
 }
+/* текст страницы Викисловаря берём один раз на слово: из него достаём и транскрипцию, и переводы, и определения */
+const wiktCache=new Map();
+function wiktPage(term){
+  const key=norm(term);
+  if(!wiktCache.has(key)){
+    const p=(async()=>{
+      let r, j; try{ r=await fetchT("https://en.wiktionary.org/w/api.php?action=parse&prop=wikitext&format=json&formatversion=2&redirects=1&origin=*&page="+encodeURIComponent(term)); }catch{ return {state:"net", text:""}; }
+      if(!r.ok) return {state:"net", text:""};
+      try{ j=await r.json(); }catch{ return {state:"net", text:""}; }
+      const wt=j?.parse?.wikitext; if(typeof wt!=="string") return {state:"notfound", text:""};
+      return {state:"ok", text:wt};
+    })();
+    wiktCache.set(key,p); p.then(v=>{ if(v.state==="net") wiktCache.delete(key); });
+  }
+  return wiktCache.get(key);
+}
 async function wiktIpa(term){
-  let r, j; try{ r=await fetchT("https://en.wiktionary.org/w/api.php?action=parse&prop=wikitext&format=json&formatversion=2&redirects=1&origin=*&page="+encodeURIComponent(term)); }catch{ return {state:"net", ipa:""}; }
-  if(!r.ok) return {state:"net", ipa:""};
-  try{ j=await r.json(); }catch{ return {state:"net", ipa:""}; }
-  const wt=j?.parse?.wikitext; if(typeof wt!=="string") return {state:"notfound", ipa:""};
-  let en=wt; const a=wt.indexOf("==English=="); if(a>=0){ en=wt.slice(a+10); const b=en.search(/\n==[^=]/); if(b>=0) en=en.slice(0,b); }
+  const pg=await wiktPage(term); if(pg.state!=="ok") return {state:pg.state, ipa:""};
+  const en=wikEnglish(pg.text, true);
   const m=/\{\{IPA\|en\|([^}]*)\}\}/.exec(en); if(!m) return {state:"notfound", ipa:""};
   const p=m[1].split("|").map(x=>x.trim()).find(x=>/^[\/\[].+[\/\]]$/.test(x));
   if(!p) return {state:"notfound", ipa:""};
   return {state:"ok", ipa:"/"+p.slice(1,-1)+"/"};
 }
+/* английский раздел страницы; whole=true: если раздела нет, берём всю страницу (для транскрипции) */
+function wikEnglish(wt, whole=false){
+  const a=wt.indexOf("==English==");
+  if(a<0) return whole ? wt : "";
+  let en=wt.slice(a+11); const b=en.search(/\n==[^=]/); if(b>=0) en=en.slice(0,b);
+  return en;
+}
+/* вики-разметка -> обычный текст: шаблоны {{lb|en|…}}, ссылки [[a|b]], курсив */
+function cleanWiki(t){
+  let s=String(t||"");
+  for(let i=0;i<6 && s.includes("{{");i++){
+    s=s.replace(/\{\{([^{}]*)\}\}/g,(_,inner)=>{
+      const p=inner.split("|").map(x=>x.trim()), name=p[0].toLowerCase();
+      if(["lb","lbl","label","context","cx"].includes(name)){ const labs=p.slice(2).filter(x=>x && !x.includes("=") && !/^(_|and|or|,|;|nocat)$/i.test(x)); return labs.length?"("+labs.join(", ")+")":""; }
+      if(["q","qual","qualifier","i","qf"].includes(name)){ const q=p.slice(1).filter(x=>x&&!x.includes("=")); return q.length?"("+q.join(", ")+")":""; }
+      if(["l","m","link","mention","ll","l-self","m-self","m-lite","l-lite"].includes(name)) return p[3] && !p[3].includes("=") ? p[3] : (p[2]||"");
+      if(["w","pedlink","wikipedia"].includes(name)) return p[2]||p[1]||"";
+      if(["gloss","gl"].includes(name)) return p[1]?"("+p[1]+")":"";
+      if(["non-gloss definition","n-g","ngd","non-gloss"].includes(name)) return p[1]||"";
+      return "";
+    });
+  }
+  return s.replace(/\[\[(?:Category|File|Image):[^\]]*\]\]/gi,"").replace(/\[\[(?:[^\]|]*\|)?([^\]]*)\]\]/g,"$1")
+    .replace(/<ref[^>]*>[\s\S]*?<\/ref>/g,"").replace(/<[^>]*>/g,"").replace(/'{2,}/g,"").replace(/&nbsp;/g," ")
+    .replace(/\(\s*\)/g,"").replace(/\s+/g," ").trim();
+}
+/* русские переводы из блока Translations: группы по смыслу ({{trans-top|значение}}) */
+function wikTranslations(en){
+  const groups=[];
+  const blocks=en.match(/={3,5}\s*Translations\s*={3,5}[\s\S]*?(?=\n={2,5}[^=]|$)/g)||[];
+  for(const blk of blocks){
+    let gloss="";
+    for(const raw of blk.split("\n")){
+      const line=raw.trim();
+      const tt=/^\{\{trans-top\|(.*?)\}\}$/i.exec(line);
+      if(tt){ gloss=cleanWiki(tt[1].split("|")[0]); continue; }
+      if(/^\{\{trans-top\}\}/i.test(line)){ gloss=""; continue; }
+      const ru=/^\*+\s*Russian\s*:\s*(.*)$/i.exec(line); if(!ru) continue;
+      const terms=[];
+      for(const m of ru[1].matchAll(/\{\{(?:t\+?|t-simple|tt\+?|t-check|t\+check)\|ru\|([^|}]+)/g)){
+        const t=cleanWiki(m[1]).replace(/\u0301/g,""); if(t && !t.includes("=") && isCyr(t) && t.length<=60 && !terms.some(x=>norm(x)===norm(t))) terms.push(t);
+      }
+      if(terms.length){
+        const g=groups.find(x=>x.gloss===gloss);
+        if(g) terms.forEach(t=>{ if(!g.terms.some(x=>norm(x)===norm(t))) g.terms.push(t); }); else groups.push({gloss, terms});
+      }
+    }
+  }
+  return groups;
+}
+const WIK_POS=/^={3,5}\s*(Noun|Proper noun|Verb|Adjective|Adverb|Preposition|Conjunction|Pronoun|Interjection|Determiner|Particle|Phrase|Idiom|Proverb|Prepositional phrase|Numeral|Contraction|Article|Postposition|Phrasal verb)\s*={3,5}$/i;
+/* определения на английском по частям речи */
+function wikDefinitions(en){
+  const defs=[]; let pos="";
+  for(const raw of en.split("\n")){
+    const line=raw.trim(); const h=WIK_POS.exec(line);
+    if(h){ pos=h[1].toLowerCase(); continue; }
+    if(/^={2,5}[^=]/.test(line)){ pos=""; continue; }
+    if(pos && /^#(?![:*#])\s/.test(line)){
+      let d=cleanWiki(line.slice(1)); const lab=/^(\([^)]*\)\s*)+/.exec(d); if(lab) d=d.slice(lab[0].length).trim();
+      d=d.replace(/[:;,\s]+$/,"");
+      if(d.length>=4 && /[a-z]/i.test(d) && !/^(alternative|plural|simple past|past participle|present participle|third-person|obsolete form|misspelling|eye dialect)\b/i.test(d)) defs.push({pos, def:d.slice(0,220), label:lab?lab[0].trim():""});
+    }
+  }
+  return defs;
+}
+/* переводы и определения слова или фразы из Викисловаря */
+async function wiktLearn(term){
+  const pg=await wiktPage(term); if(pg.state!=="ok") return {state:pg.state, groups:[], defs:[]};
+  const en=wikEnglish(pg.text);
+  if(!en) return {state:"notfound", groups:[], defs:[]};
+  return {state:"ok", groups:wikTranslations(en), defs:wikDefinitions(en)};
+}
+const meaningsFromDefs = defs => { const m=new Map(); defs.forEach(d=>{ (m.get(d.pos)||m.set(d.pos,[]).get(d.pos)).push({def:d.def, ex:""}); }); return [...m].map(([pos,ds])=>({pos, defs:ds.slice(0,3)})); };
 
 /* --- Офлайн-словарь произношений (CMU, американский вариант): складываем транскрипцию фразы по словам --- */
 let cmuPromise=null;
@@ -637,22 +790,26 @@ async function enrichInfo(en){
     const core=coreOf(en), words=core.split(/\s+/).filter(Boolean), vars=phraseVariants(en);
     if(!core) return out;
     // всё независимое запрашиваем одновременно: время подбора = самый медленный сервис, а не сумма
-    const [d, wd, wi, t] = await Promise.all([
+    const [d, wd, wi, t, wl] = await Promise.all([
       words.length<=2 ? FREE.dict(core) : Promise.resolve({state:"skip"}),
-      wiktDefs(core), wiktIpa(core), tatoebaExamples(en,3)
+      wiktDefs(core), wiktIpa(core), tatoebaExamples(en,6), wiktLearn(core).catch(()=>({groups:[], defs:[]}))
     ]);
     out.dict=d.state;
     if(d.state==="ok"){ out.ipa=d.ipa; out.pos=d.pos; out.audio=d.audio; out.meanings=d.meanings; if(d.ipa) out.src.ipa="словарь"; }
     out.wik = wd.state==="net"||wi.state==="net" ? "net" : wd.state;
     if(!out.ipa && wi.ipa){ out.ipa=wi.ipa; out.src.ipa="Викисловарь"; }
     if(!out.pos && wd.pos) out.pos=wd.pos;
+    if(!out.meanings?.length && wl.defs?.length){ out.meanings=meaningsFromDefs(wl.defs); if(!out.pos) out.pos=wl.defs[0].pos; }
     if(!out.ipa){ const c=await cmuIpa(core); if(c){ out.ipa=c; out.src.ipa="офлайн-словарь"; } }
-    out.tat=t.state; out.examples=t.items.slice();
-    const add=(list, hitOnly, src)=>{ for(const e of list){ if(out.examples.length>=3) break; const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||out.examples.some(y=>norm(y.en)===norm(x))) continue; out.examples.push({en:x, ru:"", src}); } };
-    if(out.examples.length<3) add(wd.examples, true, "wik");
-    if(out.examples.length<2) add(wd.examples, false, "wik");
-    if(out.examples.length<2 && d.state==="ok") add(d.examples, false, "dict");
-    out.src.ex = out.examples.length ? (t.items.length?"Tatoeba":(wd.examples.length?"Викисловарь":"словарь")) : "";
+    // собираем кандидатов из всех источников и оставляем самые понятные для выбранного уровня
+    out.tat=t.state; const cand=t.items.slice();
+    const add=(list, hitOnly, src)=>{ for(const e of list){ const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||cand.some(y=>norm(y.en)===norm(x))) continue; cand.push({en:x, ru:"", src}); } };
+    add(wd.examples, true, "wik");
+    if(cand.length<2) add(wd.examples, false, "wik");
+    if(cand.length<2 && d.state==="ok") add(d.examples, false, "dict");
+    const pseudo={en};
+    out.examples = cand.map(x=>({x, s:exScore(x,pseudo)})).sort((a,b)=>a.s-b.s).map(o=>o.x).slice(0,5);
+    out.src.ex = out.examples.length ? [...new Set(out.examples.map(x=>SRC_NAME[x.src]).filter(Boolean))].join(", ") : "";
     return out;
   })();
   infoCache.set(key,p);
@@ -683,6 +840,34 @@ function usageHtml(){
   return `<div class="usage"><div class="ubar${pct>=100?" full":pct>=80?" warn":""}" role="img" aria-label="Переводчик: использовано ${pct}%"><i style="width:${pct}%"></i></div>
   <div class="muted">Переводчик: ${m.c} из ${lim} символов (${m.r} ${plural(m.r,"запрос","запроса","запросов")}) · словарь: ${usage.dict.r} · Викисловарь: ${usage.wik.r} · примеры: ${usage.tat.r}. Счётчик обнуляется каждый день.</div></div>`;
 }
+/* прогон типичных слов и фраз через все открытые источники: видно, где перевода, определения или примеров не хватает */
+const CHECK_PHRASES = ["end up","to set off","to cope with","acquaintance","receipt","to fit","jealous","to run late","put up with","put through","fall in love with","get over","look forward to","take for granted","come across","give up","turn down","figure out","make up for","carry on","break down","bring up","go through","hang out","rely on","reluctant","deadline","achievement","overwhelmed","well-known"];
+let checkText="";
+async function runSourceCheck(){
+  const out=$("#diagOut"), btn=$("#diagList"); if(!out||!btn) return; btn.disabled=true;
+  const rows=[], tot={wik:0, any:0, def:0, ex3:0, ipa:0};
+  for(let i=0;i<CHECK_PHRASES.length;i++){
+    const ph=CHECK_PHRASES[i];
+    out.innerHTML=`<div class="muted">Проверяю ${i+1} из ${CHECK_PHRASES.length}: ${esc(ph)}…</div>`;
+    wiktCache.delete(norm(coreOf(ph))); infoCache.delete(norm(ph));
+    const [wk, mm, info] = await Promise.all([
+      wiktLearn(coreOf(ph)).catch(()=>({state:"net", groups:[], defs:[]})),
+      FREE.translate(ph,"en","ru").then(j=>FREE.variants(j,ph), e=>e?.code==="quota"?"лимит":null),
+      enrichInfo(ph).catch(()=>null)
+    ]);
+    const wikTr = wk.groups.flatMap(g=>g.terms), mmTr = Array.isArray(mm)?mm:[];
+    const hasDef = wk.defs.length>0 || !!info?.meanings?.length, ex = info?.examples?.length||0, exRu = info?.examples?.filter(x=>x.ru).length||0;
+    if(wikTr.length) tot.wik++; if(wikTr.length||mmTr.length) tot.any++; if(hasDef) tot.def++; if(ex>=3) tot.ex3++; if(info?.ipa) tot.ipa++;
+    rows.push({ph, wik:wikTr.slice(0,3).join(", "), mm:mmTr.slice(0,2).join(", ")||(mm==="лимит"?"лимит":mm===null?"нет связи":""), def:hasDef, ex, exRu, ipa:!!info?.ipa, st:wk.state});
+  }
+  const n=CHECK_PHRASES.length;
+  checkText = `Тест источников: ${n} фраз\nВикисловарь дал перевод: ${tot.wik}\nХоть какой перевод: ${tot.any}\nЕсть определение: ${tot.def}\nТри примера и больше: ${tot.ex3}\nЕсть транскрипция: ${tot.ipa}\n\n` + rows.map(r=>[r.ph,"викисловарь: "+(r.wik||"-"),"машинный: "+(r.mm||"-"),"определение: "+(r.def?"да":"нет"),"примеров: "+r.ex+" (с переводом "+r.exRu+")","транскрипция: "+(r.ipa?"да":"нет"),"страница: "+r.st].join(" | ")).join("\n");
+  out.innerHTML = usageHtml() + `<div class="small" style="margin-top:8px"><b>Итог по ${n} фразам:</b> перевод из Викисловаря: ${tot.wik}, хоть какой-то перевод: ${tot.any}, определение: ${tot.def}, три примера и больше: ${tot.ex3}, транскрипция: ${tot.ipa}.</div>
+    <div style="overflow:auto;max-height:320px;margin-top:8px"><table class="small" style="border-collapse:collapse;width:100%"><thead><tr><th align="left">Фраза</th><th align="left">Викисловарь</th><th align="left">Машинный</th><th>Опр.</th><th>Прим.</th><th>Транск.</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.ph)}</td><td>${esc(r.wik||"—")}</td><td class="muted">${esc(r.mm||"—")}</td><td align="center">${r.def?"✓":"—"}</td><td align="center">${r.ex}</td><td align="center">${r.ipa?"✓":"—"}</td></tr>`).join("")}</tbody></table></div>
+    <div class="row" style="margin-top:8px"><button class="btn" id="diagCopy" type="button">Скопировать результат</button></div>`;
+  $("#diagCopy").onclick=()=>{ try{ navigator.clipboard.writeText(checkText).then(()=>toast("Результат скопирован")); }catch{ toast("Не получилось скопировать"); } };
+  btn.disabled=false;
+}
 async function runDiag(){
   const out=$("#diagOut"), btn=$("#diagBtn"); btn.disabled=true; out.innerHTML=usageHtml()+`<div class="muted" style="margin-top:6px">Проверяю…</div>`;
   const rows=[]; const add=(ok,name,msg)=>rows.push(`<li class="${ok?"ok":"no"}"><b>${ok?"✓":"✕"} ${name}</b> <span class="muted">${esc(msg)}</span></li>`);
@@ -701,25 +886,44 @@ async function askJSON(prompt, tier="default"){
   return sample.json(prompt, {modelTier:tier});
 }
 function lookupPrompt(text, lang){
+  const lv=S().level;
   return `You are a bilingual English–Russian learner's dictionary in the style of the Cambridge English–Russian Dictionary.
 Entry (${lang==="ru"?"Russian":"English"}): "${text}"
+The learner's level is CEFR ${lv}.
 
 Reply with ONLY a JSON object of this shape:
-{"senses":[{"en":"English word or phrase","ru":"русский перевод","ipa":"/British IPA of the English/","pos":"noun|verb|phrasal verb|adjective|adverb|phrase|idiom|...","meaning":"короткое пояснение значения по-русски, до 8 слов","level":"A1|A2|B1|B2|C1|C2","examples":[{"en":"natural example sentence","ru":"перевод примера"},{"en":"...","ru":"..."}]}]}
+{"senses":[{"en":"English word or phrase","ru":"русский перевод","def":"short English definition in learner's-dictionary style, under 18 words, without the headword itself","ipa":"/British IPA of the English/","pos":"noun|verb|phrasal verb|adjective|adverb|phrase|idiom|...","meaning":"короткое пояснение значения по-русски, до 8 слов","level":"A1|A2|B1|B2|C1|C2","examples":[{"en":"natural example sentence","ru":"перевод примера"},{"en":"...","ru":"..."}]}]}
 
 Rules:
 - 2 to 6 senses, most common first; each sense is a genuinely different meaning or a different English equivalent, not a synonym list.
 - ${lang==="ru" ? 'Each "ru" stays close to the entry; "en" is the English equivalent for that meaning.' : 'Each "en" is the entry itself (keep "to" for verbs if the entry has it, or the exact phrasal form); "ru" is the translation for that meaning, up to 3 comma-separated variants.'}
-- Exactly 2 examples per sense: everyday British English, under 14 words, each containing the English word or phrase (inflected forms allowed), with natural Russian translations.
+- Exactly 3 examples per sense: everyday British English that a ${lv} learner understands (common words, simple grammar, under ${lv==="C1"?18:14} words), each containing the English word or phrase (inflected forms allowed), with natural Russian translations.
 - If the entry is misspelt, use the most likely intended word.`;
 }
 function examplesPrompt(pairs){
-  return `You are an English–Russian learner's dictionary. For each numbered pair, give the British IPA transcription of the English and 2 natural everyday British English example sentences (under 14 words, containing the English word or phrase in the meaning of the given Russian translation) with Russian translations.
+  const lv=S().level;
+  return `You are an English–Russian learner's dictionary. The learner's level is CEFR ${lv}. For each numbered pair, give the British IPA transcription of the English and 3 natural everyday British English example sentences (common words and simple grammar a ${lv} learner understands, under ${lv==="C1"?18:14} words, containing the English word or phrase in the meaning of the given translation) with Russian translations.
 
 Pairs:
-${pairs.map((p,i)=>`${i}. ${p.en} — ${p.ru}`).join("\n")}
+${pairs.map((p,i)=>`${i}. ${p.en} — ${p.ru||p.def}`).join("\n")}
 
-Reply with ONLY a JSON array: [{"i":0,"ipa":"/.../","pos":"noun|verb|...","examples":[{"en":"...","ru":"..."},{"en":"...","ru":"..."}]}]`;
+Reply with ONLY a JSON array: [{"i":0,"ipa":"/.../","pos":"noun|verb|...","examples":[{"en":"...","ru":"..."},{"en":"...","ru":"..."},{"en":"...","ru":"..."}]}]`;
+}
+/* дополнение неполных карточек: недостающий перевод или определение, транскрипция и примеры до нужного числа */
+function completePrompt(items){
+  const lv=S().level;
+  return `You are an English–Russian learner's dictionary. The learner's level is CEFR ${lv}.
+For each numbered entry fill in only what is missing. Keep the meaning that the existing Russian translation or English definition gives.
+
+Entries:
+${items.map((x,i)=>`${i}. ${x.c.en} | ru: ${x.c.ru||"(missing)"} | def: ${x.c.def||(x.c.ru?"(not needed)":"(missing)")} | ipa: ${x.c.ipa?"present":"(missing)"} | examples needed: ${x.need}`).join("\n")}
+
+Reply with ONLY a JSON array: [{"i":0,"ru":"русский перевод, до 3 вариантов через запятую (only if ru is missing)","def":"short English definition under 18 words, without the headword (only if def is missing)","ipa":"/British IPA/ (only if missing)","pos":"noun|verb|phrasal verb|adjective|adverb|phrase|idiom","examples":[{"en":"...","ru":"..."}]}]
+
+Rules:
+- Give exactly the number of examples requested for each entry (none if 0): natural everyday English that a ${lv} learner understands (common words, simple grammar, under ${lv==="C1"?18:14} words).
+- Every example must contain the English word or phrase itself (inflected forms allowed), used in the given meaning, with a natural Russian translation.
+- Do not invent a meaning the entry does not have. If you are unsure about an entry, leave the missing fields out instead of guessing.`;
 }
 function lookupErrorText(e){
   if(e?.code==="quota") return "Дневной лимит бесплатного переводчика исчерпан. Укажите email в настройках, и лимит вырастет в 10 раз, или введите перевод вручную.";
@@ -727,6 +931,12 @@ function lookupErrorText(e){
   if(e?.code==="none") return "Автоподбор сейчас недоступен. Введите перевод вручную ниже.";
   if(e?.code==="not_granted") return "Без разрешения на запросы к Claude подбор недоступен. Введите перевод вручную.";
   if(e?.code==="rate_limited") return "Слишком много запросов подряд. Подождите минуту или введите перевод вручную.";
+  if(e?.code==="ai_auth") return "Нейросеть не приняла ключ. Проверьте его в настройках или введите перевод вручную.";
+  if(e?.code==="ai_net") return "Нет связи с вашей нейросетью. Проверьте интернет и доступность сервиса или введите перевод вручную.";
+  if(e?.code==="ai_model") return "Сервис не нашёл такую модель. Проверьте название модели в настройках.";
+  if(e?.code==="ai_parse") return "Нейросеть ответила в непонятном виде. Попробуйте ещё раз.";
+  if(e?.code==="ai_host") return "Этот адрес нейросети не разрешён политикой безопасности страницы. Выберите один из предложенных в настройках.";
+  if(e?.code==="ai_http") return "Нейросеть вернула ошибку ("+(e.status||"?")+"). Попробуйте позже.";
   return "Не получилось подобрать перевод. Попробуйте ещё раз или введите вручную.";
 }
 
@@ -747,9 +957,8 @@ async function addManual(){
   if(!w){ addInput.focus(); return; }
   const lang=isCyr(w)?"ru":"en";
   if(lang==="ru" && isCyr(tr)){ toast("Для русского слова впишите английский перевод"); $("#addRu").focus(); return; }
-  if(lang==="en" && !isCyr(tr)){ toast("Впишите перевод на русский"); $("#addRu").focus(); return; }
   addState={ text:w, lang, senses:[], sel:-1, picks:[], manual:tr, loading:false, error:null };
-  const en = lang==="ru" ? tr : w;
+  const en = lang==="ru" ? tr : w;   // для английского слова поле принимает русский перевод или определение по-английски
   await saveDraft();
   $("#addRu").value=""; $("#addBtn").disabled=true;
   const c=allCards().find(x=>dupKey(x.en)===dupKey(en));
@@ -758,6 +967,33 @@ async function addManual(){
   }
 }
 
+/* Lite: варианты перевода из открытых источников. Сначала переводы из Викисловаря (их написали люди), потом машинный перевод MyMemory
+   с пометкой. Если перевода нет совсем, предлагаем английские определения: карточку можно сохранить и с ними. */
+async function liteSenses(text){
+  const core=coreOf(text)||text, out=[], seen=new Set();
+  const base=()=>({en:text, ipa:"", pos:"", audio:"", examples:[], free:true, enriched:true});
+  const [mm, wk] = await Promise.all([
+    FREE.translate(text,"en","ru").then(v=>({v}), e=>({e})),
+    wiktLearn(core).catch(()=>({state:"net", groups:[], defs:[]}))
+  ]);
+  for(const g of wk.groups){
+    const terms=g.terms.filter(t=>!seen.has(norm(t))).slice(0,3); if(!terms.length) continue;
+    terms.forEach(t=>seen.add(norm(t)));
+    out.push({...base(), ru:terms.join(", "), def:g.gloss, src:"wik"});
+  }
+  let mmErr=mm.e||null;
+  const addMt=j=>FREE.variants(j, text).forEach(v=>{ if(!seen.has(norm(v)) && out.length<8){ seen.add(norm(v)); out.push({...base(), ru:v, mt:true, src:"mm"}); } });
+  if(mm.v) addMt(mm.v);
+  // глагол без «to»: «end up» MyMemory часто переводит буквально, с «to» обычно точнее
+  if(!mmErr && wk.defs.some(d=>/verb/.test(d.pos)) && !/^to\s/i.test(text.trim())){
+    try{ addMt(await FREE.translate("to "+core,"en","ru")); }catch(e){ mmErr=mmErr||e; }
+  }
+  if(!out.length && wk.defs.length){
+    wk.defs.slice(0,3).forEach(d=>out.push({...base(), ru:"", def:d.def, pos:d.pos, src:"def"}));
+  }
+  if(!out.length && mmErr) throw mmErr;
+  return out;
+}
 async function lookup(){
   const text = addInput.value.trim(); if(!text) { addInput.focus(); return; }
   const lang = isCyr(text) ? "ru" : "en";
@@ -767,13 +1003,20 @@ async function lookup(){
   try{
     let senses;
     if(await getSample()){
-      const r = await askJSON(lookupPrompt(text, lang));
-      senses = (r?.senses||[]).filter(s=>s && s.en && s.ru).slice(0,6).map(s=>({...s, examples:(s.examples||[]).filter(x=>x&&x.en).slice(0,3)}));
+      const ownAi = SOURCE==="ai";
+      // параллельно берём настоящие примеры из открытых источников: один из них заменит последний придуманный
+      const [r, info] = await Promise.all([askJSON(lookupPrompt(text, lang)), lang==="en" && ownAi ? enrichInfo(text).catch(()=>null) : Promise.resolve(null)]);
+      senses = (r?.senses||[]).filter(s=>s && s.en && s.ru).slice(0,6).map(s=>{
+        let ex=(s.examples||[]).filter(x=>x&&x.en).slice(0,3).map(x=>ownAi?{...x, src:"ai"}:x);
+        const real=(info?.examples||[]).find(e=>e.en && !ex.some(y=>norm(y.en)===norm(e.en)));
+        if(real){ ex = ex.length>=3 ? [...ex.slice(0,2), {...real}] : [...ex, {...real}]; }
+        return {...s, def:str(s.def,300), src:ownAi?"ai":undefined, examples:ex, ipa:s.ipa||info?.ipa||"", audio:s.audio||info?.audio||""};
+      });
+      if(info){ addState.info=info; addState.meanings=info.meanings; }
     } else if(lang==="en"){
       // варианты перевода показываем сразу, как только ответил переводчик; транскрипция и примеры подтянутся следом
       const infoP = enrichInfo(text);
-      const tr = await FREE.translate(text,"en","ru");
-      senses = FREE.variants(tr, text).map(v=>({en:text, ru:v, ipa:"", pos:"", audio:"", examples:[], free:true, enriched:true}));
+      senses = await liteSenses(text);
       const st0=addState;
       infoP.then(info=>{
         if(addState!==st0) return;
@@ -793,7 +1036,7 @@ async function lookup(){
     }
     fromExample=null;
     addState.senses = senses; addState.loading=false;
-    if(!senses.length) addState.error = "Словарь ничего не нашёл. Проверьте написание или введите перевод вручную.";
+    if(!senses.length) addState.error = "Надёжного перевода не нашлось. Проверьте написание или впишите свой перевод (или определение по-английски) в поле выше.";
   }catch(e){
     fromExample=null;
     if(addState?.text!==text) return;
@@ -805,32 +1048,34 @@ function renderAdd(){
   const el = $("#addResult"); const st = addState;
   if(!st){ el.innerHTML=""; return; }
   let h = "";
-  if(st.dup) h += `<div class="feedback no small">Такая карточка уже есть: <b>${esc(st.dup.en)} — ${esc(st.dup.ru)}</b></div>`;
+  if(st.dup) h += `<div class="feedback no small">Такая карточка уже есть: <b>${esc(st.dup.en)} — ${esc(glossOf(st.dup))}</b></div>`;
   if(st.loading) h += `<div class="label">Ищу значения…</div><div class="senses"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`;
   if(st.error) h += `<div class="feedback no small">${esc(st.error)}</div>`;
   if(st.senses?.length){
     h += `<div class="label">${st.lang==="ru"?"Выберите подходящий перевод":"Выберите один или несколько переводов"}</div><div class="senses">`;
     st.senses.forEach((s,i)=>{
-      const main = st.lang==="ru" ? s.en : s.ru;
+      const main = st.lang==="ru" ? s.en : (s.ru || s.def);
+      const srcChip = s.src==="wik" ? `<span class="chip" ${tipAttr("Перевод из Викисловаря: его написали люди.")}>Викисловарь</span>` : s.mt ? `<span class="chip warn" ${tipAttr("Машинный перевод: он может быть неточным. Проверьте, прежде чем сохранять.")}>машинный</span>` : s.src==="def" ? `<span class="chip" ${tipAttr("Перевода не нашлось, но карточку можно сохранить с английским определением.")}>только определение</span>` : s.src==="ai" ? `<span class="chip" ${tipAttr("Подобрано вашей нейросетью.")}>ИИ</span>` : "";
+      const sub = s.meaning || (s.ru && s.def ? s.def : "");
       h += `<button type="button" class="sense" data-sense="${i}" aria-pressed="${(st.picks||[]).includes(i)}">
-        <span class="t">${esc(main)} ${s.pos?`<span class="chip">${esc(s.pos)}</span>`:""} ${s.level?`<span class="chip">${esc(s.level)}</span>`:""}</span>
-        ${s.meaning?`<span class="small muted">${esc(s.meaning)}</span>`:""}
+        <span class="t">${esc(main)} ${s.pos?`<span class="chip">${esc(s.pos)}</span>`:""} ${s.level?`<span class="chip">${esc(s.level)}</span>`:""} ${srcChip}</span>
+        ${sub?`<span class="small muted">${esc(sub)}</span>`:""}
         ${s.examples?.[0] && !s.free?`<span class="ex">${esc(s.examples[0].en)}</span>`:""}
       </button>`;
     });
     h += `</div>`;
     if(st.meanings?.length){
-      h += `<details class="imp"><summary class="small">Значения в английском словаре</summary><ul class="ex-list small" style="margin-top:8px">${st.meanings.slice(0,4).map(m=>m.defs.slice(0,2).map(d=>`<li><span class="chip">${esc(m.pos)}</span><div>${esc(d.def)}${d.ex?`<div class="ru"><i>${esc(d.ex)}</i></div>`:""}</div></li>`).join("")).join("")}</ul></details>`;
+      h += `<details class="imp"><summary class="small">Значения в английском словаре</summary><ul class="ex-list small" style="margin-top:8px">${st.meanings.slice(0,4).map(m=>m.defs.slice(0,2).map(d=>`<li><span class="chip">${esc(m.pos)}</span><div>${esc(d.def)}${d.ex?`<div class="ru"><i>${esc(d.ex)}</i></div>`:""}<button type="button" class="btn ghost" data-pickdef="${esc(d.def)}" aria-pressed="${st.defPick===d.def}" style="min-height:28px;padding:2px 8px">${st.defPick===d.def?"Определение выбрано":"Взять как определение"}</button></div></li>`).join("")).join("")}</ul></details>`;
     }
   }
   const c = currentDraft();
   const sameEn = c ? findDupEn(c.en) : null;
   if(c){
     const newRu = sameEn ? newRuFor(sameEn, c) : [];
-    if(sameEn) h += `<div class="feedback no small">Слово «${esc(sameEn.en)}» уже есть в колоде (${esc(sameEn.ru)}). ${newRu.length?`Новая карточка не создастся: к существующей добавится перевод «${esc(newRu.join(", "))}» и теги, а прогресс сохранится.`:"Такой перевод уже есть. К существующей карточке добавятся только теги, а прогресс сохранится."}</div>`;
+    if(sameEn) h += `<div class="feedback no small">Слово «${esc(sameEn.en)}» уже есть в колоде (${esc(glossOf(sameEn))}). ${newRu.length?`Новая карточка не создастся: к существующей добавится перевод «${esc(newRu.join(", "))}» и теги, а прогресс сохранится.`:"Такой перевод уже есть. К существующей карточке добавятся только теги, а прогресс сохранится."}</div>`;
     h += `<div class="preview stack" style="gap:10px">
       <div class="row" style="justify-content:space-between;gap:8px"><div><div style="font-size:20px;font-weight:700">${esc(c.en)}</div>
-      <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(c.ru)}</span></div></div>${sayBtn(c.en,"en",false)}</div>
+      <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(glossOf(c))}</span></div>${c.def&&c.ru?`<div class="small muted">${esc(c.def)}</div>`:""}</div>${sayBtn(c.en,"en",false)}</div>
       ${c.examples.length?`<ul class="ex-list">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`
         : `<div class="row small muted">Примеров пока нет. <button type="button" class="btn ghost" id="fetchEx" style="min-height:32px;padding:4px 8px">Подобрать примеры</button></div>`}
       ${st.infoLoading ? `<div class="small muted">Подбираю транскрипцию и примеры…</div>` : (!c.ipa || !c.examples.length) && st.info ? `<div class="small muted">${esc(infoHint(st.info))}</div>` : ""}
@@ -850,6 +1095,7 @@ function renderAdd(){
     }
     renderAdd(); if(st.picks.includes(i)) autoSpeak(v.en,"en");
   });
+  el.querySelectorAll("[data-pickdef]").forEach(b=>b.onclick=()=>{ st.defPick = st.defPick===b.dataset.pickdef ? "" : b.dataset.pickdef; renderAdd(); });
   const fe=$("#fetchEx"); if(fe) fe.onclick=fetchManualExamples;
   const sv=$("#saveCard"); if(sv) sv.onclick=saveDraft;
 }
@@ -861,15 +1107,16 @@ const newRuFor = (card, d) => ruVariants(d.ru).filter(v=>!ruVariants(card.ru).so
 function currentDraft(){
   const st=addState; if(!st) return null;
   if(st.manual?.trim()){
-    const en = st.lang==="ru" ? st.manual.trim() : st.text, ru = st.lang==="ru" ? st.text : st.manual.trim();
-    return { en, ru, ipa:st.manualEx?.ipa||"", pos:st.manualEx?.pos||"", audio:st.manualEx?.audio||"", examples:st.manualEx?.examples||[] };
+    const m = st.manual.trim(), defOnly = st.lang==="en" && !isCyr(m);
+    const en = st.lang==="ru" ? m : st.text, ru = defOnly ? "" : (st.lang==="ru" ? st.text : m);
+    return { en, ru, def: defOnly ? m : (st.defPick||""), ipa:st.manualEx?.ipa||"", pos:st.manualEx?.pos||"", audio:st.manualEx?.audio||"", examples:st.manualEx?.examples||[] };
   }
   const ps=(st.picks||[]).map(i=>st.senses?.[i]).filter(Boolean);
   if(ps.length){
     const s=ps[0];
     let ru = st.lang==="ru" ? st.text : joinRu(ps.map(x=>x.ru));
     const exs=[]; ps.forEach(x=>(x.examples||[]).forEach(e=>{ if(exs.length<3 && !exs.some(y=>norm(y.en)===norm(e.en))) exs.push(e); }));
-    return { en: s.en, ru, ipa:s.ipa||"", pos:s.pos||"", note:s.meaning||"", audio:s.audio||"", examples:exs };
+    return { en: s.en, ru, def: st.defPick || s.def || "", ipa:s.ipa||"", pos:s.pos||"", note:s.meaning||"", audio:s.audio||"", examples:exs };
   }
   return null;
 }
@@ -900,6 +1147,7 @@ async function saveDraft(){
     const before=same.tags.length, add=newRuFor(same,d); let changed=false;
     same.tags=cleanTags([...same.tags,...tags]); if(same.tags.length!==before) changed=true;
     if(add.length){ const nr=joinRu([same.ru,...add]); if(nr!==same.ru){ same.ru=nr; changed=true; } }
+    if(!same.def&&d.def){ same.def=d.def; changed=true; }
     if(!same.ipa&&d.ipa){ same.ipa=d.ipa; changed=true; } if(!same.pos&&d.pos){ same.pos=d.pos; changed=true; } if(!same.audio&&d.audio){ same.audio=d.audio; changed=true; }
     for(const e of d.examples){ if(same.examples.length<5 && e.en && !same.examples.some(y=>norm(y.en)===norm(e.en))){ same.examples.push({...e}); changed=true; } }
     if(changed) Store.saveCard(same);
@@ -929,20 +1177,21 @@ function parseImport(text, dry=false){
       a=line.slice(0,i).replace(/[\s\-–—:=]+$/,"").trim(); b=line.slice(i).trim();
     }
     if(!a){ skipped.push([line,"нет слова"]); continue; }
-    let en="", ru="", need=null;
+    let en="", ru="", def="", need=null;
     if(b){
-      if(isCyr(a)===isCyr(b)){ skipped.push([line,"не понял, где слово и где перевод"]); continue; }
-      if(isCyr(a)) [a,b]=[b,a];
-      en=a; ru=b;
+      if(isCyr(a)===isCyr(b)){
+        if(!isCyr(a) && b.split(/\s+/).length>=2){ en=a; def=b; }   // «слово — определение по-английски»
+        else { skipped.push([line,"не понял, где слово и где перевод"]); continue; }
+      } else { if(isCyr(a)) [a,b]=[b,a]; en=a; ru=b; }
     } else if(isCyr(a)){ ru=a; need="en"; }
     else { en=a; need="ru"; }
-    en=en.slice(0,200); ru=ru.slice(0,300);
+    en=en.slice(0,200); ru=ru.slice(0,300); def=def.slice(0,300);
     const key = en ? "e:"+dupKey(en) : "r:"+norm(ru);
     if(seen.has(key) || (en ? haveEn.has(dupKey(en)) : haveRu.has(norm(ru)))){
       const ex = en ? byEn.get(dupKey(en)) : allCards().find(c=>norm(c.ru)===norm(ru));
       if(!dry && ex && tags.length && !seen.has(key)){ const n0=ex.tags.length; ex.tags=cleanTags([...ex.tags,...tags]); if(ex.tags.length!==n0) Store.saveCard(ex); skipped.push([line,"уже есть, тег добавлен"]); seen.add(key); continue; }
       skipped.push([line,"уже есть"]); continue; }
-    seen.add(key); items.push({en, ru, need});
+    seen.add(key); items.push({en, ru, def, need});
   }
   return {items, skipped};
 }
@@ -988,13 +1237,13 @@ $("#impBtn").onclick = async ()=>{
     const ready=[];
     const takenEn=new Set(allCards().map(c=>dupKey(c.en))), impTags0=parseTags($("#addTags").value);
     items.forEach(x=>{
-      if(!(x.en && x.ru)){ failed.push([x.en||x.ru,"не удалось подобрать перевод"]); return; }
+      if(!(x.en && (x.ru||x.def))){ failed.push([x.en||x.ru,"не удалось подобрать перевод"]); return; }
       const k=dupKey(x.en);
       if(takenEn.has(k)){ const ex=findDupEn(x.en); if(ex && impTags0.length){ const n0=ex.tags.length; ex.tags=cleanTags([...ex.tags,...impTags0]); if(ex.tags.length!==n0) Store.saveCard(ex); failed.push([x.en,"уже есть, тег добавлен"]); } else failed.push([x.en,"уже есть"]); return; }
       takenEn.add(k); ready.push(x);
     });
     // 2. сразу сохраняем карточки, чтобы ничего не потерялось
-    const impTags=parseTags($("#addTags").value), made=ready.map(x=>newCard({en:x.en, ru:x.ru, tags:impTags}));
+    const impTags=parseTags($("#addTags").value), made=ready.map(x=>newCard({en:x.en, ru:x.ru, def:x.def, tags:impTags}));
     Store.saveMany(made);
     renderList();
     // 3. дополняем транскрипцией, звуком и примерами тем же способом, что и при одиночном добавлении
@@ -1031,7 +1280,7 @@ async function enrichCards(cards, sample, btn){
     await pool(cards, 3, async c=>{
       const b=snap(c);
       const info=await enrichInfo(c.en);
-      applyInfo(c, info);
+      applyInfo(c, info); topUpExamples(c, info);
       if(c.examples.some(x=>!x.ru)) await FREE.translateExamples(c.examples);
       Store.saveLazy(c); tally(c,b); n++; setBtn();
     }, ()=>impStop);
@@ -1076,9 +1325,81 @@ function reportSkipped(sk){
 }
 
 
+/* пример по смыслу содержит слово или фразу (в любой форме)? Нужен, чтобы отсеять придуманные нейросетью предложения мимо цели */
+function looseHit(sentence, enPhrase){
+  const words=coreOf(enPhrase).toLowerCase().split(/\s+/).filter(w=>w.length>2 && !PLACEHOLDER.test(w));
+  if(!words.length) return true;
+  const sn=" "+String(sentence).toLowerCase().replace(/[’‘`´]/g,"'").replace(/[^a-z' ]+/g," ")+" ";
+  return words.every(w=>sn.includes(w.slice(0,Math.max(3,w.length-2))) || (IRREG[w]||[]).some(f=>sn.includes(" "+f+" ")));
+}
+/* настоящие примеры из открытых источников добавляем к уже имеющимся, пока их не станет нужное число */
+function topUpExamples(c, info){
+  let added=0;
+  for(const e of (info?.examples||[])){
+    if(c.examples.length>=MIN_EX) break;
+    if(e.en && !c.examples.some(y=>norm(y.en)===norm(e.en))){ c.examples.push({...e}); added++; }
+  }
+  return added;
+}
+async function translateWithAi(items){
+  const todo=items.filter(x=>x.en && !x.ru);
+  for(let i=0;i<todo.length && !impStop;i+=25){
+    const chunk=todo.slice(i,i+25);
+    try{
+      const r=await askJSON(`Translate each numbered English sentence into natural Russian. Reply with ONLY a JSON array of strings in the same order.\n\n${chunk.map((x,k)=>`${k}. ${x.en}`).join("\n")}`,"quick");
+      chunk.forEach((x,k)=>{ const t=String(r?.[k]||"").trim(); if(t){ x.ru=t.slice(0,300); x.mt=true; } });
+    }catch(e){ if(["ai_auth","ai_model","ai_host","rate_limited"].includes(e?.code)) throw e; }
+  }
+}
+/* Дополнить неполные карточки: сначала настоящие данные из открытых источников, затем нейросеть добирает недостающее
+   (перевод или определение, транскрипцию и примеры до нужного числа на выбранном уровне). Придуманные примеры помечаются «ИИ». */
+async function completeCards(cards, btn){
+  let n=0; const total=cards.length, gain={ipa:0, ex:0, ru:0, err:null};
+  const setBtn=()=>{ btn.textContent=`Остановить · ${Math.min(n,total)}/${total}`; }; setBtn();
+  const snap=c=>({i:!!c.ipa, e:c.examples.length, g:!!glossOf(c)});
+  const before=new Map(cards.map(c=>[c.id,snap(c)]));
+  await pool(cards, 3, async c=>{
+    const info=await enrichInfo(c.en);
+    if(!c.ipa && info.ipa) c.ipa=info.ipa; if(!c.pos && info.pos) c.pos=info.pos; if(!c.audio && info.audio) c.audio=info.audio;
+    topUpExamples(c, info);
+    Store.saveLazy(c); n++; setBtn();
+  }, ()=>impStop);
+  const todo=cards.filter(c=>!c.ru || !c.ipa || c.examples.length<MIN_EX).map(c=>({c, need:Math.max(0, MIN_EX-c.examples.length)}));
+  try{
+    for(let i=0;i<todo.length && !impStop;i+=10){
+      const chunk=todo.slice(i,i+10);
+      try{
+        const r=await askJSON(completePrompt(chunk),"quick");
+        (Array.isArray(r)?r:[]).forEach(x=>{
+          const t=chunk[x?.i]; if(!t) return; const c=t.c;
+          const ru=str(x.ru,300).trim(), df=str(x.def,300).trim();
+          if(!c.ru && ru) c.ru=ru;                       // русский перевод добавляем и карточкам, где было только определение
+          if(!glossOf(c) && df) c.def=df;
+          if(!c.ipa && str(x.ipa,100).trim()) c.ipa=str(x.ipa,100).trim();
+          if(!c.pos && str(x.pos,40).trim()) c.pos=str(x.pos,40).trim();
+          for(const e of (Array.isArray(x.examples)?x.examples:[])){
+            if(c.examples.length>=Math.min(5, MIN_EX) || !e?.en) continue;
+            const en=str(e.en,300).trim();
+            if(!goodSentence(en) || !looseHit(en, c.en) || c.examples.some(y=>norm(y.en)===norm(en))) continue;
+            c.examples.push({en, ru:str(e.ru,300).trim(), src:"ai"});
+          }
+          Store.saveLazy(c);
+        });
+      }catch(e){ gain.err=e; if(["ai_auth","ai_model","ai_host","rate_limited","ai_net"].includes(e?.code)) break; }
+      n=Math.min(total, n); setBtn();
+    }
+    // у каждого примера должен быть перевод: недостающие переводит нейросеть (с пометкой «машинный перевод»)
+    const noRu=cards.flatMap(c=>c.examples.filter(x=>!x.ru));
+    if(noRu.length && !impStop) await translateWithAi(noRu);
+  }catch(e){ gain.err=gain.err||e; }
+  cards.forEach(c=>{ const b=before.get(c.id); if(!b.i&&c.ipa) gain.ipa++; gain.ex+=Math.max(0,c.examples.length-b.e); if(!b.g&&glossOf(c)) gain.ru++; Store.saveLazy(c); });
+  Store.flushLazy();
+  return gain;
+}
+
 /* ---- дополнить данные у всей колоды ---- */
 let fillRes=null, fillBusy=false;
-const needsWork = c => !c.ipa || !c.examples.length || (mmLeft()>0 && c.examples.some(x=>!x.ru));
+const needsWork = c => !glossOf(c) || !c.ipa || c.examples.length<MIN_EX || (mmLeft()>0 && c.examples.some(x=>!x.ru)) || (SOURCE!=="free" && !c.ru);
 function renderFillBox(){ const el=$("#fillBox"); if(el) el.innerHTML=""; }
 async function fillDeck(src){
   if(impBusy||fillBusy) return;
@@ -1086,15 +1407,16 @@ async function fillDeck(src){
   fillBusy=true; impBusy=true; impStop=false; fillRes=null;
   const btn={textContent:""}; toast(`Ищу недостающее у ${list.length} ${plural(list.length,"слова","слов","слов")}…`);
   const before=usage.mm.c;
-  let gain={ipa:0,ex:0};
-  try{ gain=await enrichCards(list, await getSample(), btn); }
+  let gain={ipa:0,ex:0,ru:0,err:null};
+  try{ const sm=await getSample(); gain = sm ? await completeCards(list, btn) : await enrichCards(list, null, btn); }
   finally{
     const st=impStop; fillBusy=false; impBusy=false; impStop=false;
-    const left=allCards().filter(c=>!c.ipa||!c.examples.length).length, noTr=allCards().filter(c=>c.examples.some(x=>!x.ru)).length;
+    const left=allCards().filter(c=>!glossOf(c)||!c.ipa||c.examples.length<MIN_EX).length, noTr=allCards().filter(c=>c.examples.some(x=>!x.ru)).length;
     const found=gain.ipa+gain.ex>0;
-    let msg=found?`Нашлось: транскрипций ${gain.ipa}, примеров ${gain.ex}.`:"На этот раз ничего нового не нашлось.";
+    let msg=found?`Нашлось: ${gain.ru?`переводов ${gain.ru}, `:""}транскрипций ${gain.ipa}, примеров ${gain.ex}.`:"На этот раз ничего нового не нашлось.";
+    if(gain.err) msg+=" "+lookupErrorText(gain.err);
     if(st) msg+=" Подбор остановлен.";
-    if(left) msg+=` Без транскрипции или примеров осталось ${left}: возможно, этих слов нет в словарях.`;
+    if(left) msg+=` Не хватает перевода, транскрипции или трёх примеров у ${left}${SOURCE==="free"?": возможно, этих слов нет в открытых словарях. Подключите свою нейросеть в настройках, и она добавит недостающее":""}.`;
     if(noTr && mmLeft()<=0) msg+=` Дневной лимит переводчика исчерпан: у ${noTr} ${plural(noTr,"слова","слов","слов")} примеры пока без перевода, их можно добрать завтра.`;
     fillRes=null; toast(msg);
     renderList(); renderLearn();
@@ -1151,7 +1473,7 @@ function filteredCards(){
   else if(filter==="tomorrow"){ const t0=startOfDay()+DAY; list=list.filter(c=>c.box>0&&c.due>=t0&&c.due<t0+DAY); }
   else if(filter==="incomplete") list=list.filter(c=>quality(c).length>0);
   else if(filter!=="all") list=list.filter(c=>status(c)===filter);
-  if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||c.tags.some(t=>t.includes(q)));
+  if(q) list=list.filter(c=>norm(c.en).includes(q)||norm(c.ru).includes(q)||norm(c.def||"").includes(q)||c.tags.some(t=>t.includes(q)));
   return list.sort(SORTS[sortMode][1]);
 }
 const FILTER_EMPTY={
@@ -1195,7 +1517,7 @@ function renderList(){
     return `<div class="witem">
     <div class="wrow${sel?" selected":""}" role="${selMode?"checkbox":"button"}" ${selMode?`aria-checked="${sel}"`:""} tabindex="0" data-edit="${c.id}">
       ${selMode?`<span class="chk" aria-hidden="true"></span>`:""}${sayBtn(c.en)}
-      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(c.ru)}</span>${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
+      <div class="w"><b>${esc(c.en)}${c.demo?' <span class="chip">демо</span>':""}</b><span>${esc(glossOf(c))}</span>${c.ru&&c.def?`<span class="small muted">${esc(c.def)}</span>`:""}${c.tags.length?`<div class="wtags">${c.tags.map(t=>`<button type="button" class="tagchip sm" data-tagf2="${esc(t)}" ${tipAttr("Показать только слова с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}</div>
       <span class="exslot">${has?`<button type="button" class="exbtn${open?" open":""}" data-ex="${c.id}" aria-expanded="${open}" aria-label="Примеры использования" ${tipAttr(open?"Скрыть примеры":"Показать примеры использования ("+has+")")}>${CHEV}</button>`:""}</span>
       <span class="nextdue${isDue(c)?" due":""}">${dueLabel(c)}</span>
       ${boxesHtml(c)}
@@ -1226,7 +1548,7 @@ function openWMenu(fromBar){
     ${selMode&&n?it("none","Снять выбор",`выбрано: ${n}`):""}
     <div class="wm-h">${n?`С выбранными (${n})`:"Со словами"}</div>
     ${it("tag","Добавить тег","",!n)}${it("untag","Убрать тег","",!n)}
-    ${it("fill","Найти недостающие данные","транскрипция, примеры, их перевод",!n)}
+    ${it("fill",n?"Дополнить выбранные":"Дополнить неполные",SOURCE==="free"?"перевод, транскрипция и примеры из открытых источников":"перевод, транскрипция и примеры до трёх на вашем уровне")}
     ${it("dup","Найти дубли",dupN)}
     ${it("del","Удалить","",!n)}
     <div class="wm-h">Теги</div>${it("tags","Управление тегами","переименовать, объединить, удалить")}`;
@@ -1250,7 +1572,7 @@ wMenu.onclick=e=>{
   else if(k==="none"){ selected.clear(); renderList(); }
   else if(k==="tag") bulkAddTag();
   else if(k==="untag") bulkRemoveTag();
-  else if(k==="fill") fillDeck(selCards());
+  else if(k==="fill"){ const sel=selCards(); fillDeck(sel.length?sel:allCards()); }
   else if(k==="dup") openDupScanner(visSel().length?visSel():null);
   else if(k==="del") bulkDelete();
   else if(k==="tags") openTagManager();
@@ -1352,7 +1674,9 @@ function mergeInto(keep, others){
     keep.tags=cleanTags([...keep.tags,...o.tags]);
     if(!keep.ipa&&o.ipa) keep.ipa=o.ipa; if(!keep.pos&&o.pos) keep.pos=o.pos; if(!keep.audio&&o.audio) keep.audio=o.audio;
     if(!keep.examples.length&&o.examples.length) keep.examples=o.examples.map(x=>({...x}));
-    if(norm(keep.ru).indexOf(norm(o.ru))<0 && (keep.ru+", "+o.ru).length<=300) keep.ru=keep.ru+", "+o.ru;
+    if(o.ru && !keep.ru) keep.ru=o.ru;
+    else if(o.ru && norm(keep.ru).indexOf(norm(o.ru))<0 && (keep.ru+", "+o.ru).length<=300) keep.ru=keep.ru+", "+o.ru;
+    if(!keep.def&&o.def) keep.def=o.def;
     if(o.box>keep.box){ keep.box=o.box; keep.due=o.due; keep.fails=o.fails; keep.last=Math.max(keep.last,o.last); }
     keep.reps+=o.reps; keep.lapses+=o.lapses; keep.created=Math.min(keep.created,o.created);
   }
@@ -1364,7 +1688,7 @@ function openDupScanner(scopeIds){
   const groups=dupGroups(dupScope?dupScope.map(id=>Store.cards.get(id)).filter(Boolean):null);
   const body=groups.length ? `<p class="small muted" style="margin:0">Одинаковое английское слово или фраза (без учёта регистра, «to», артиклей и скобок). Выберите карточку, которую оставить: теги, транскрипция, примеры и лучший прогресс перенесутся в неё.</p>
     <div class="row" style="justify-content:space-between"><span class="small">Групп: ${groups.length}</span><button class="btn primary" type="button" id="dupAll" ${tipAttr("Объединить все группы: останется карточка с лучшим прогрессом")}>Объединить все</button></div>
-    <div class="stack" style="gap:12px;max-height:50vh;overflow:auto">${groups.map(([k,g],gi)=>{ const keep=bestOf(g); return `<div class="dupgrp" data-k="${esc(k)}"><div class="label">${esc(k)}</div>${g.map(c=>`<label class="duprow"><input type="radio" name="dg${gi}" value="${c.id}" ${c===keep?"checked":""}><span><b>${esc(c.en)}</b> — ${esc(c.ru)}<br><span class="muted small">уровень ${c.box}/7 · примеров: ${c.examples.length}${c.tags.length?" · "+c.tags.map(esc).join(", "):""}</span></span></label>`).join("")}<div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-dg="skip">Не объединять</button><button class="btn primary" type="button" data-dg="merge">Объединить</button></div></div>`; }).join("")}</div>`
+    <div class="stack" style="gap:12px;max-height:50vh;overflow:auto">${groups.map(([k,g],gi)=>{ const keep=bestOf(g); return `<div class="dupgrp" data-k="${esc(k)}"><div class="label">${esc(k)}</div>${g.map(c=>`<label class="duprow"><input type="radio" name="dg${gi}" value="${c.id}" ${c===keep?"checked":""}><span><b>${esc(c.en)}</b> — ${esc(glossOf(c))}<br><span class="muted small">уровень ${c.box}/7 · примеров: ${c.examples.length}${c.tags.length?" · "+c.tags.map(esc).join(", "):""}</span></span></label>`).join("")}<div class="row" style="justify-content:flex-end"><button class="btn" type="button" data-dg="skip">Не объединять</button><button class="btn primary" type="button" data-dg="merge">Объединить</button></div></div>`; }).join("")}</div>`
     : `<div class="panel empty muted" style="text-align:center">Дублей не нашлось: у каждого английского слова одна карточка.</div>`;
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Дубли</h2><button class="btn" id="dup-close" type="button">Готово</button></div>${body}`);
   $("#dup-close").onclick=()=>{ dupScope=null; closeModal(); renderAll(); };
@@ -1405,10 +1729,11 @@ function openEdit(id){
   openModal(`<div class="row" style="justify-content:space-between"><h2 style="font-size:18px">Карточка</h2>${boxesHtml(c)}</div>
     <label class="f">English<input class="input" id="e-en" value="${esc(c.en)}"></label>
     <label class="f">Русский<input class="input" id="e-ru" value="${esc(c.ru)}"></label>
+    <label class="f"><span>Определение по-английски<button class="tip" type="button" aria-label="Пояснение" data-tip="Необязательно, если есть русский перевод. Если перевода нет, определение показывается вместо него.">?</button></span><input class="input" id="e-def" value="${esc(c.def||"")}" maxlength="300" placeholder="например: to finally be in a particular place or situation"></label>
     <label class="f">Транскрипция<input class="input" id="e-ipa" value="${esc(c.ipa)}"></label>
     <label class="f">Примеры: по одному в строке, «English | перевод». Первая строка — главный пример, он показывается первым<textarea class="input" id="e-ex">${esc(c.examples.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n"))}</textarea></label>
     <div class="tagbox" id="e-tagbox"><label class="f"><span>Теги<button class="tip" type="button" aria-label="Пояснение" data-tip="Через запятую. По тегу слова можно фильтровать в списке и учить отдельной подборкой.">?</button></span><input class="input" id="e-tags" autocomplete="off" value="${esc((c.tags||[]).join(", "))}" placeholder="например: работа, поездка" maxlength="200"></label><div class="tagchips"></div></div>
-    ${SOURCE==="free"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
+    ${SOURCE!=="claude"?`<div class="row"><button class="btn" id="e-fetch" type="button">Подтянуть из словаря</button><span class="small muted" id="e-fetchMsg"></span></div>`:""}
     <div class="small muted">Следующее повторение: ${dueLabel(c)} · повторений: ${c.reps}</div>
     <div class="row">${c.box>0?`<button class="btn" id="e-prac" type="button" data-tip="Пройти упражнения по этому слову прямо сейчас. Уровень и срок повтора не изменятся.">Потренировать сейчас</button>`:""}${c.box<7?`<button class="btn" id="e-master" type="button" data-tip="Поставит прогресс слова на 100%: следующий повтор через 90 дней. Сбросить прогресс можно в любой момент.">Отметить выученным</button>`:`<span class="chip">Прогресс 100%</span>`}</div>
     <div class="row" id="e-actions" style="justify-content:space-between">
@@ -1431,10 +1756,12 @@ function openEdit(id){
     b.disabled=false;
   };
   $("#e-save").onclick=()=>{
+    const newRu=$("#e-ru").value.trim(), newDef=$("#e-def").value.trim();
+    if(!newRu && !newDef){ toast("Впишите перевод или определение"); return; }
     const newEn=$("#e-en").value.trim()||c.en;
     if(norm(newEn)!==norm(c.en)){ c.audio=""; }   // запись произношения относилась к прежнему слову
     if(pendAudio && !c.audio) c.audio=pendAudio; if(pendPos && !c.pos) c.pos=pendPos;
-    c.en=newEn; c.ru=$("#e-ru").value.trim()||c.ru; c.ipa=$("#e-ipa").value.trim(); c.tags=parseTags($("#e-tags").value);
+    c.en=newEn; c.ru=newRu; c.def=newDef; c.ipa=$("#e-ipa").value.trim(); c.tags=parseTags($("#e-tags").value);
     const old=new Map([...pendEx, ...c.examples].map(x=>[norm(x.en),x]));
     const firstOld=norm(exInit.split("\n")[0]?.split("|")[0]||"");
     c.examples=$("#e-ex").value.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{ const [en,ru]=l.split("|").map(s=>s.trim()); const o=old.get(norm(en)), r={en, ru:ru||""}; if(o){ if(o.src) r.src=o.src; if(o.mt && norm(o.ru)===norm(ru||"")) r.mt=true; if(o.pin) r.pin=true; } return r; });
@@ -1589,7 +1916,7 @@ function renderLearn(){
   <div class="sec-head"><h2>Все слова</h2>${cs.length?`<button class="pill-link" data-go="words">Открыть список · ${cs.length}</button>`:""}</div>
   <div class="grid2">
     ${!cs.length?`<div class="panel stack" style="grid-column:1/-1"><div><b>Пока в колоде нет слов</b><div class="small muted">Добавьте своё слово или список, либо загрузите 8 готовых слов, чтобы посмотреть, как всё работает.</div></div><div class="row"><button class="btn primary" type="button" data-go="words">Добавить слово</button><button class="btn" type="button" id="demoBtn">8 слов для пробы</button></div></div>`:""}
-    ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(c.ru)}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
+    ${[...cs].sort((a,b)=>b.created-a.created).slice(0,4).map(c=>`<div class="wordtile">${sayBtn(c.en,"en",false)}<div class="w"><b>${esc(c.en)}</b><span>${esc(glossOf(c))}${c.ipa?` · <span class="ipa" style="display:inline">${esc(c.ipa)}</span>`:""}</span></div>${boxesHtml(c)}</div>`).join("")}
   </div>
 `;
   el.querySelectorAll("[data-start]").forEach(b=>b.onclick=()=> b.dataset.start==="learn" ? startLearn() : startPractice());
@@ -1719,8 +2046,18 @@ function resumeSess(){
   next();
 }
 function cardOf(id){ return Store.cards.get(id); }
-function front(c){ return S().first==="en" ? {t:c.en, l:"en"} : {t:c.ru, l:"ru"}; }
-function back(c){ return S().first==="en" ? {t:c.ru, l:"ru"} : {t:c.en, l:"en"}; }
+function front(c){ return S().first==="en" ? {t:c.en, l:"en"} : {t:glossOf(c), l:glossLang(c)}; }
+function back(c){ return S().first==="en" ? {t:glossOf(c), l:glossLang(c)} : {t:c.en, l:"en"}; }
+const shownText = (c, x) => x.t===c.en ? x.t : maskDef(c, x.t);
+/* определение без русского перевода: слово в нём закрываем, иначе ответ виден сразу */
+function maskDef(c, t=glossOf(c)){
+  if(c.ru) return t;
+  const core=coreOf(c.en).trim(); if(!core) return t;
+  const forms=core.split(/\s+/).filter(w=>w.length>2).map(w=>w.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  if(!forms.length) return t;
+  const stems=forms.map(w=>w.length>4?w.slice(0,-1):w);
+  return String(t).replace(new RegExp("\\b(?:"+stems.join("|")+")[a-z]*","gi"),"…");
+}
 function updateBar(){ const p=sess.total?Math.round(sess.done/sess.total*100):0; sess.maxP=Math.max(sess.maxP||0,p); $("#pbar").style.width=sess.maxP+"%";}
 function next(){
   updateBar();
@@ -1743,8 +2080,8 @@ function done(ok, id, requeue=true){
 }
 const MODE = {intro:"Знакомство", choice:"Выберите перевод", match:"Соедините пары", cloze:"Вставьте пропущенное", letters:"Соберите слово из букв", typing:"Напишите по-английски"};
 function head(type, extra=""){ return `<div class="mode-tag"><span class="label">${MODE[type]}</span>${extra}</div>`; }
-const SRC_NAME={tat:"Tatoeba", wik:"Викисловарь", dict:"словарь", ctx:"из вашего примера"};
-const SRC_TIP={tat:"Предложение из Tatoeba: его написали и проверили люди.", wik:"Пример из Викисловаря.", dict:"Пример из словаря.", ctx:"Предложение из примера, на который вы нажали."};
+const SRC_NAME={tat:"Tatoeba", wik:"Викисловарь", dict:"словарь", ctx:"из вашего примера", ai:"ИИ"};
+const SRC_TIP={tat:"Предложение из Tatoeba: его написали и проверили люди.", wik:"Пример из Викисловаря.", dict:"Пример из словаря.", ctx:"Предложение из примера, на который вы нажали.", ai:"Предложение составила ваша нейросеть. В нём бывают неточности: сомнительные примеры лучше поправить в карточке."};
 function srcTag(x, onlyWarn=false){
   const t=[]; if(!onlyWarn && SRC_NAME[x.src]) t.push(SRC_NAME[x.src]);
   if(x.mt) t.push("машинный перевод"); else if(!x.ru) t.push("без перевода");
@@ -1770,10 +2107,11 @@ function addFromExample(w, sentence){
   go("words"); addInput.value=w; addInput.dispatchEvent(new Event("input")); scrollTo(0,0); lookup();
 }
 function bindXw(el){ el.querySelectorAll("[data-xw]").forEach(b=>b.onclick=ev=>{ ev.stopPropagation(); hideTip(); addFromExample(b.dataset.xw, b.closest(".en").textContent); }); }
+const MIN_EX = 3;   // цель: у каждого слова перевод (или определение) и минимум три примера
 function quality(c){
-  const m=[]; if(!c.ipa) m.push("транскрипция");
+  const m=[]; if(!glossOf(c)) m.push("перевод"); if(!c.ipa) m.push("транскрипция");
   if(!c.examples.length) m.push("примеры");
-  else { if(c.examples.length<2) m.push("второй пример"); if(c.examples.some(x=>!x.ru)) m.push("перевод примеров"); else if(c.examples.every(x=>x.mt)) m.push("проверка перевода примеров"); }
+  else { if(c.examples.length<MIN_EX) m.push("примеров меньше "+MIN_EX); if(c.examples.some(x=>!x.ru)) m.push("перевод примеров"); else if(c.examples.every(x=>x.mt)) m.push("проверка перевода примеров"); }
   return m;
 }
 const body = () => $("#sessBody");
@@ -1816,31 +2154,34 @@ function stepIntro(round, id){
 /* неверные варианты похожи на ответ по форме (часть речи, «to», длина, число слов), поэтому угадать по виду нельзя;
    слова с тем же русским переводом (to hire / to rent) в варианты не берём: ответ был бы неоднозначным */
 function distractors(c, key, n=3){
-  const base=String(c[key]), isTo=/^to\s/i.test(base), len=base.length, wc=base.split(/\s+/).length, mine=ruVariants(c.ru).map(norm);
+  const get = x => key==="en" ? x.en : glossOf(x);   // key: "en" (слово) или "g" (перевод/определение)
+  const base=String(get(c)), isTo=/^to\s/i.test(base), len=base.length, wc=base.split(/\s+/).length, mine=ruVariants(c.ru).map(norm);
   const clash=x=>ruVariants(x.ru).some(v=>mine.includes(norm(v)));
   const score=x=>{
-    const v=String(x[key]); let sc=Math.abs(v.length-len)/Math.max(len,6)*2 + Math.abs(v.split(/\s+/).length-wc)*0.7;
+    const v=String(get(x)); let sc=Math.abs(v.length-len)/Math.max(len,6)*2 + Math.abs(v.split(/\s+/).length-wc)*0.7;
     if(key==="en"){ if(/^to\s/i.test(v)!==isTo) sc+=3; if(x.pos && c.pos && x.pos!==c.pos) sc+=1; }
     if(sess.ids.includes(x.id)) sc-=0.8;
     return sc+Math.random()*1.2;
   };
-  const pool=allCards().filter(x=>x.id!==c.id && norm(x[key])!==norm(base) && !clash(x)).map(x=>[score(x),x]).sort((a,b)=>a[0]-b[0]).map(p=>p[1]);
+  const pool=allCards().filter(x=>x.id!==c.id && get(x) && (key==="en" || glossLang(x)===glossLang(c)) && norm(get(x))!==norm(base) && !clash(x)).map(x=>[score(x),x]).sort((a,b)=>a[0]-b[0]).map(p=>p[1]);
   const out=[]; const seen=new Set([norm(base)]);
-  for(const x of [...pool, ...shuffle(FILLER)]){ const v=x[key]; if(!seen.has(norm(v))){ seen.add(norm(v)); out.push(v); } if(out.length>=n) break; }
+  for(const x of [...pool, ...(key==="en"||glossLang(c)==="ru" ? shuffle(FILLER) : [])]){ const v=key==="en"?x.en:glossOf(x); if(!seen.has(norm(v))){ seen.add(norm(v)); out.push(v); } if(out.length>=n) break; }
   return out;
 }
 function stepChoice(round, id){
   const c=cardOf(id);
-  const ask = round.dir==="fwd" ? front(c) : back(c);
-  const ans = round.dir==="fwd" ? back(c) : front(c);
-  const key = ans.l;
+  let ask = round.dir==="fwd" ? front(c) : back(c);
+  let ans = round.dir==="fwd" ? back(c) : front(c);
+  if(!c.ru && ans.t!==c.en) [ask, ans] = [ans, ask];   // у карточки только определение: всегда угадываем слово по определению
+  const key = ans.t===c.en ? "en" : "g";
+  const askT = ask.t===c.en ? ask.t : maskDef(c, ask.t);
   const opts = shuffle([ans.t, ...distractors(c, key)]);
   body().innerHTML = head("choice") + `
-  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="word">${esc(ask.t)}</div>${sayBtn(ask.t,ask.l,false)}</div>${c.ipa&&ask.l==="en"?`<div class="ipa">${esc(c.ipa)}</div>`:""}</div>
+  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="word">${esc(askT)}</div>${ask.t===c.en||c.ru?sayBtn(ask.t,ask.l,false):""}</div>${c.ipa&&ask.t===c.en?`<div class="ipa">${esc(c.ipa)}</div>`:""}</div>
   <div class="opts">${opts.map((o,i)=>`<button class="opt" data-o="${i}"><kbd>${i+1}</kbd><span>${esc(o)}</span></button>`).join("")}</div>
   <div class="row" style="justify-content:center"><button type="button" class="btn ghost" id="idk">Не помню</button></div>
   <div id="fb"></div>`;
-  if(ask.l==="en") autoSpeak(ask.t,"en");
+  if(ask.t===c.en) autoSpeak(ask.t,"en");
   const wrongShown=()=>{
     $("#idk").disabled=true;
     $("#fb").innerHTML=`<div class="feedback no">Правильно: <b>${esc(ans.t)}</b>. Слово вернётся в конце раунда.</div><div class="sess-foot"><button class="btn primary" id="go">Дальше</button></div>`;
@@ -1864,8 +2205,8 @@ function stepMatch(round, group){
   const left=shuffle(cs), right=shuffle(cs);
   let sel=null, left_n=cs.length; const err=new Set();
   body().innerHTML = head("match", `<span class="chip">${cs.length} ${plural(cs.length,"пара","пары","пар")}</span>`) + `
-  <div class="match"><div class="col">${left.map(c=>`<button class="mitem" data-l="${c.id}">${esc(front(c).t)}</button>`).join("")}</div>
-  <div class="col">${right.map(c=>`<button class="mitem" data-r="${c.id}">${esc(back(c).t)}</button>`).join("")}</div></div>`;
+  <div class="match"><div class="col">${left.map(c=>`<button class="mitem" data-l="${c.id}">${esc(shownText(c,front(c)))}</button>`).join("")}</div>
+  <div class="col">${right.map(c=>`<button class="mitem" data-r="${c.id}">${esc(shownText(c,back(c)))}</button>`).join("")}</div></div>`;
   const B=body();
   B.querySelectorAll("[data-l]").forEach(b=>b.onclick=()=>{ B.querySelectorAll("[data-l]").forEach(x=>x.classList.remove("sel")); sel=b.dataset.l; b.classList.add("sel"); const c=cardOf(sel); if(front(c).l==="en") autoSpeak(c.en,"en"); });
   B.querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{
@@ -1897,7 +2238,7 @@ function stepLetters(round, id){
   let tiles = shuffle(letterIdx.map((i,k)=>({k, ch:chars[i].toLowerCase()})));
   let pos=0, errors=0, wrongInRow=0;
   body().innerHTML = head("letters") + `
-  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div>${contextHtml(c)}</div>
+  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(maskDef(c))}</div>${c.ru?sayBtn(c.ru,"ru"):""}</div>${contextHtml(c)}</div>
   <div class="slots" id="slots" style="--n:${Math.max(6,...target.split(/\s+/).map(w=>[...w].length))}">${(()=>{ let o="", cur=""; const flush=()=>{ if(cur){ o+=`<span class="swd">${cur}</span>`; cur=""; } }; chars.forEach((ch,i)=>{ if(ch===" "){ flush(); o+=`<span class="slot gap"></span>`; } else cur+= isL(ch) ? `<span class="slot" data-s="${i}"></span>` : `<span class="slot fixed">${esc(ch)}</span>`; }); flush(); return o; })()}</div>
   <div class="tiles" id="tiles"></div><div id="fb"></div>`;
   const renderTiles=()=>{ $("#tiles").innerHTML = tiles.map(t=>`<button class="tile" data-k="${t.k}">${esc(t.ch)}</button>`).join(""); $("#tiles").querySelectorAll("[data-k]").forEach(b=>b.onclick=()=>press(b)); };
@@ -1925,7 +2266,7 @@ function stepCloze(round, id){
   const {x,m}=cz, sen=x.en, before=sen.slice(0,m.index), after=sen.slice(m.index+m.text.length), target=m.text;
   let hinted=false;
   body().innerHTML = head("cloze") + `
-  <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div></div>
+  <div class="flash"><div class="cloze-s" id="cz">${esc(before)}<span class="blank" style="min-width:${Math.min(16,Math.max(4,target.length))}ch"></span>${esc(after)}</div>${x.ru?`<div class="context">${esc(x.ru)}</div>`:""}<div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:18px;font-weight:600">${esc(maskDef(c))}</div>${c.ru?sayBtn(c.ru,"ru"):""}</div></div>
   <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="впишите слово" aria-label="Пропущенное слово">
   <button class="btn primary wide" type="submit" id="check">Проверить</button><div class="row hintrow"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div></form>
   <div id="fb"></div>`;
@@ -1968,7 +2309,7 @@ function stepTyping(round, id){
   const c=cardOf(id), target=c.en;
   let hinted=false;
   body().innerHTML = head("typing") + `
-  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(c.ru)}</div>${sayBtn(c.ru,"ru")}</div>${contextHtml(c)}</div>
+  <div class="flash"><div class="row" style="justify-content:center;flex-wrap:nowrap"><div class="trans" style="font-size:24px;font-weight:600">${esc(maskDef(c))}</div>${c.ru?sayBtn(c.ru,"ru"):""}</div>${contextHtml(c)}</div>
   <form id="tf" class="stack" style="gap:10px"><input class="input type-in" id="ti" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="по-английски" aria-label="Ответ по-английски">
   <button class="btn primary wide" type="submit" id="check">Проверить</button><div class="row hintrow"><button type="button" class="btn ghost" id="hint">Подсказка</button><button type="button" class="btn ghost" id="dunno">Не помню</button></div></form>
   <div id="fb"></div>`;
@@ -2139,7 +2480,7 @@ function renderStats(){
   </div>
   <div class="panel stack" style="gap:8px">
     <div class="label">Топ-10 трудных слов${tip(TIPS.top)}</div>
-    ${top.length? top.map((c,i)=>`<div class="row" style="justify-content:space-between"><span><span class="muted">${i+1}.</span> <b>${esc(c.en)}</b> <span class="muted">— ${esc(c.ru)}</span></span><span class="chip">${c.errs} ${plural(c.errs,"ошибка","ошибки","ошибок")}</span></div>`).join("") : `<div class="muted small">Пока пусто: сюда попадут слова, в которых вы чаще всего ошибаетесь.</div>`}
+    ${top.length? top.map((c,i)=>`<div class="row" style="justify-content:space-between"><span><span class="muted">${i+1}.</span> <b>${esc(c.en)}</b> <span class="muted">— ${esc(glossOf(c))}</span></span><span class="chip">${c.errs} ${plural(c.errs,"ошибка","ошибки","ошибок")}</span></div>`).join("") : `<div class="muted small">Пока пусто: сюда попадут слова, в которых вы чаще всего ошибаетесь.</div>`}
   </div>`;
 }
 
@@ -2159,6 +2500,50 @@ function importBackup(text){
   const n=list.length; renderAll();
   toast(`Загружено ${n} ${plural(n,"карточка","карточки","карточек")}`+(notesIn?` и ${notesIn} ${plural(notesIn,"заметка","заметки","заметок")}`:"")+(kept?`, ${kept} уже свежее в колоде — не тронуты`:""));
 }
+/* ---- настройки: своя нейросеть (Pro) ---- */
+function aiPanel(){
+  if(SOURCE==="claude") return `<div class="panel"><div class="label" style="margin-bottom:4px">Нейросеть</div><div class="setrow"><div class="lbl"><b>Подключена</b><span>Внутри Claude переводы и примеры подбирает Claude, отдельный ключ не нужен.</span></div></div></div>`;
+  const raw=AI.raw()||{}, on=!!AI.load(), prov=AI_PROVIDERS[raw.provider]?raw.provider:"openai", d=AI_PROVIDERS[prov];
+  const base=esc(raw.provider===prov && raw.base ? raw.base : d.base), model=esc(raw.provider===prov && raw.model ? raw.model : d.model);
+  return `<div class="panel" id="aiPanel">
+    <div class="label" style="margin-bottom:4px">Нейросеть (Pro)</div>
+    <div class="setrow"><div class="lbl"><b>${on?"Подключена":"Не подключена"}</b><span>${on?esc(AI_PROVIDERS[prov].label)+" · "+model+". Нейросеть дополняет карточки: недостающий перевод, транскрипцию и примеры на вашем уровне. Настоящие примеры из открытых источников берутся в первую очередь.":"Подключите свою нейросеть, и Колода добавит недостающий перевод и примеры на вашем уровне. Без неё работают открытые источники: Викисловарь, Tatoeba и другие."}</span></div></div>
+    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Сервис</b><span>OpenAI-совместимый подходит для OpenAI, OpenRouter и Gemini (его OpenAI-режим)</span></div>
+      <select class="input" id="aiProv" style="max-width:230px;min-height:40px">${Object.entries(AI_PROVIDERS).map(([k,v])=>`<option value="${k}" ${k===prov?"selected":""}>${esc(v.label)}</option>`).join("")}</select></div>
+    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Адрес API</b><span>Разрешены только: ${AI_HOSTS.join(", ")}</span></div><input class="input" id="aiBase" autocomplete="off" spellcheck="false" value="${base}" maxlength="200"></div>
+    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Модель</b><span>название, как в вашем сервисе; небольшая быстрая модель подойдёт</span></div><input class="input" id="aiModel" autocomplete="off" spellcheck="false" value="${model}" maxlength="100"></div>
+    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Ключ API</b><span>${on?"ключ сохранён, вставьте новый, чтобы заменить":"вставьте ключ из кабинета сервиса"}</span></div><input class="input" id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${on?"•••• сохранён":"sk-…"}" maxlength="300"></div>
+    <div class="setrow"><div class="lbl"><b>Запомнить ключ на этом устройстве</b><span>Если выключено, ключ забудется, когда вы закроете вкладку</span></div><input type="checkbox" id="aiRemember" ${raw.remember?"checked":""} aria-label="Запомнить ключ на этом устройстве"></div>
+    <div class="row" style="margin-top:8px"><button class="btn primary" id="aiConnect" type="button">${on?"Проверить и сохранить":"Подключить"}</button>${raw.provider?`<button class="btn danger" id="aiOff" type="button">Отключить и удалить ключ</button>`:""}</div>
+    <div class="small muted" id="aiMsg" style="margin-top:8px" role="status"></div>
+    <div class="small muted" style="margin-top:8px">Ключ хранится только в этом браузере. Колода не отправляет его на свой сервер и не сохраняет в облаке аккаунта. Слова уходят напрямую выбранному сервису, по его правилам и тарифу. Лучше завести отдельный ключ с лимитом расходов.</div>
+  </div>`;
+}
+function aiTestError(e){
+  return ({ai_auth:"Сервис не принял ключ. Проверьте, что ключ вставлен целиком и подходит к этому сервису.", ai_net:"Нет связи с сервисом. Проверьте интернет и адрес. Из некоторых стран сервис может быть недоступен без VPN.", ai_model:"Сервис не нашёл такую модель. Проверьте её название.", rate_limited:"Сервис просит подождать: слишком много запросов или закончился лимит.", ai_parse:"Сервис ответил в непонятном виде. Проверьте модель и адрес.", ai_host:"Этот адрес не разрешён политикой безопасности страницы.", ai_http:"Сервис вернул ошибку ("+(e?.status||"?")+")."})[e?.code] || "Не получилось подключиться.";
+}
+function bindAiPanel(){
+  const pv=$("#aiProv"); if(!pv) return;
+  pv.onchange=()=>{ const d=AI_PROVIDERS[pv.value]; $("#aiBase").value=d.base; $("#aiModel").value=d.model; };
+  $("#aiConnect").onclick=async ()=>{
+    const msg=$("#aiMsg"), btn=$("#aiConnect");
+    const prov=pv.value, base=AI.allowedBase($("#aiBase").value.trim()), model=$("#aiModel").value.trim(), remember=$("#aiRemember").checked;
+    let key=$("#aiKey").value.replace(/\s+/g,""); if(!key){ const cur=AI.load(); if(cur && cur.provider===prov) key=cur.key; }
+    if(!base){ msg.textContent="Адрес не разрешён. Допустимые сервисы: "+AI_HOSTS.join(", ")+"."; return; }
+    if(!model){ msg.textContent="Укажите модель."; return; }
+    if(!key){ msg.textContent="Вставьте ключ."; return; }
+    if(/[^\x21-\x7e]/.test(key)){ msg.textContent="В ключе есть лишние символы. Скопируйте его ещё раз."; return; }
+    btn.disabled=true; msg.textContent="Проверяю связь…";
+    const cfg={provider:prov, base, model, key, remember};
+    try{
+      const r=await AI.json(cfg,'Reply with ONLY this JSON and nothing else: {"ok":true}');
+      if(r?.ok!==true) throw {code:"ai_parse"};
+      AI.save(cfg); await refreshSource(); toast("Нейросеть подключена");
+    }catch(e){ msg.textContent=aiTestError(e); btn.disabled=false; }
+  };
+  const off=$("#aiOff"); if(off) off.onclick=async ()=>{ AI.clear(); await refreshSource(); toast("Нейросеть отключена, ключ удалён"); };
+}
+
 function renderPrefs(){
   const s=S(), el=$("#v-prefs");
   const en=voices.filter(v=>/^en/i.test(v.lang)), hasRu=voices.some(v=>/^ru/i.test(v.lang));
@@ -2203,19 +2588,21 @@ function renderPrefs(){
       <div class="row" style="flex-wrap:nowrap"><select class="input" id="voice" style="max-width:190px;min-height:40px">${`<option value="">Автовыбор (британский)</option>`+en.map(v=>`<option value="${esc(v.voiceURI)}" ${v.voiceURI===s.voice?"selected":""}>${esc(v.name)} · ${esc(v.lang)}</option>`).join("")}</select>${sayBtn("Nice to meet you","en",false)}</div></div>
   </div>
   ${accountPanel()}
+  ${aiPanel()}
   <div class="panel">
     <div class="label" style="margin-bottom:4px">Данные</div>
     <div class="setrow"><div class="lbl"><b>Хранение</b><span>${Store.mode==="claude"?"в вашем аккаунте Claude, видно с любого устройства":Store.mode==="supa"?"в вашем аккаунте, видно на любом устройстве после входа":"только в этом браузере — войдите в аккаунт или делайте резервную копию"}</span></div></div>
-    <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":"MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
-    ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Email для MyMemory</b><span>Необязательно. Переводчик MyMemory бесплатно переводит около 5 000 символов в день, это примерно 30–50 новых карточек. Если указать email, лимит вырастет до 50 000. Подтверждать почту не нужно, адрес уходит только в MyMemory и сохраняется в ваших настройках.</span></div><input class="input" id="mmEmail" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(s.mmEmail||"")}" style="max-width:260px"></div>`:""}
-    ${SOURCE==="free"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Подбор переводов и примеров<button class="tip" type="button" aria-label="Пояснение" data-tip="Колода берёт данные из бесплатных сервисов, у которых есть дневные лимиты. Здесь видно, сколько обращений вы сделали сегодня (оценка по этому браузеру), и можно проверить, отвечают ли сервисы.">?</button></b><span>обращения сегодня и проверка источников</span></div><button class="btn" id="diagBtn" type="button">Проверить</button><div id="diagOut" class="small" style="flex-basis:100%">${usageHtml()}</div></div>`:""}
+    <div class="setrow"><div class="lbl"><b>Источник переводов</b><span>${SOURCE==="claude"?"Claude":SOURCE==="ai"?"Ваша нейросеть + открытые источники":"Викисловарь + MyMemory + Free Dictionary API + Tatoeba"}</span></div></div>
+    ${SOURCE!=="claude"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Email для MyMemory</b><span>Необязательно. Переводчик MyMemory бесплатно переводит около 5 000 символов в день, это примерно 30–50 новых карточек. Если указать email, лимит вырастет до 50 000. Подтверждать почту не нужно, адрес уходит только в MyMemory и сохраняется в ваших настройках.</span></div><input class="input" id="mmEmail" type="email" autocomplete="email" placeholder="you@example.com" value="${esc(s.mmEmail||"")}" style="max-width:260px"></div>`:""}
+    ${SOURCE!=="claude"?`<div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Подбор переводов и примеров<button class="tip" type="button" aria-label="Пояснение" data-tip="Колода берёт данные из бесплатных сервисов, у которых есть дневные лимиты. Здесь видно, сколько обращений вы сделали сегодня (оценка по этому браузеру), и можно проверить, отвечают ли сервисы.">?</button></b><span>обращения сегодня и проверка источников</span></div><button class="btn" id="diagBtn" type="button">Проверить</button><button class="btn" id="diagList" type="button" data-tip="Прогоняет 30 типичных слов и фраз через все источники и показывает, чего где не хватает. Займёт 2–3 минуты и израсходует около 600 символов дневного лимита переводчика.">Тест на 30 фразах</button><div id="diagOut" class="small" style="flex-basis:100%">${usageHtml()}</div></div>`:""}
     <div class="setrow"><div class="lbl"><b>Резервная копия</b><span>сохраните колоду файлом или скопируйте как текст; при загрузке более свежий прогресс в колоде не перезаписывается</span></div><div class="row"><button class="btn" id="expFile">Скачать файл</button><button class="btn" id="impFile">Из файла</button><button class="btn" id="exp">Копировать</button><button class="btn" id="imp">Вставить</button></div><input type="file" id="impFileIn" accept=".json,application/json,text/plain" hidden></div>
     <div class="setrow"><div class="lbl"><b>Очистить колоду</b><span>удалить все карточки и статистику</span></div><button class="btn danger" id="wipe">Очистить</button></div>
     <div id="dataArea"></div>
   </div>`;
-  bindAccountPanel(el);
+  bindAccountPanel(el); bindAiPanel();
   $("#nick").onchange=e=>{ s.nick=e.target.value.trim().slice(0,30); Store.saveSettings(); renderAcct(); toast(s.nick?"Имя сохранено":"Имя убрано"); };
   if($("#diagBtn")) $("#diagBtn").onclick=runDiag;
+  if($("#diagList")) $("#diagList").onclick=runSourceCheck;
   const save=()=>{ Store.saveSettings(); };
   el.querySelectorAll("[data-iv]").forEach(inp=>inp.onchange=()=>{
     const iv=INTERVALS.slice(1), i=+inp.dataset.iv; let v=Math.round(+inp.value);
@@ -2388,6 +2775,7 @@ function openNewPassword(recovery=false){
   };
 }
 async function signOut(){
+  AI.forgetSession();   // ключ, введённый «на время сессии», не остаётся после выхода
   if(Store.hasUnsynced()){
     await Store.flush();
     if(Store.hasUnsynced()){
