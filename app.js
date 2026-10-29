@@ -3125,7 +3125,7 @@ document.addEventListener("click",e=>{ const b=e.target.closest("[data-addntag]"
 
 /* ============ routing ============ */
 let view="learn";
-const VIEWS=["learn","words","course","grammar","stats","prefs"];
+const VIEWS=["learn","words","course","practice","grammar","stats","prefs"];
 function go(v){
   if(!VIEWS.includes(v)) v="learn"; view=v;
   VIEWS.forEach(x=>$("#v-"+x).hidden = x!==v);
@@ -3134,7 +3134,7 @@ function go(v){
   try{ history.replaceState(null,"","#"+v); }catch{}
   renderView(); window.scrollTo(0,0);
 }
-function renderView(){ ({learn:renderLearn, words:renderList, course:()=>window.renderCourse&&window.renderCourse(), grammar:renderGrammar, stats:renderStats, prefs:renderPrefs})[view](); }
+function renderView(){ ({learn:renderLearn, words:renderList, course:()=>window.renderCourse&&window.renderCourse(), practice:()=>window.renderPractice&&window.renderPractice(), grammar:renderGrammar, stats:renderStats, prefs:renderPrefs})[view](); }
 /* одноразово: подтягиваем сроки старых слов под новые, более короткие интервалы; слова с ошибками возвращаем в повтор */
 function migrateSched(){
   if(S().sched>=3 || !Store.cards.size) return;

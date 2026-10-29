@@ -225,7 +225,8 @@ function renderSay() {
   const s = CR.say, l = lessonById(s.id);
   if (!s.queue.length) {
     setProg(l.id, p => { p[2] |= F_SAY; });
-    el().innerHTML = `<div class="panel stack crs-done"><div class="crs-score"><b>✓</b><span>разговорная практика пройдена</span></div><p style="text-align:center;margin:0;font-weight:600">Скажите эти фразы ещё раз сегодня вечером в реальной ситуации: так они закрепятся.</p><div class="row" style="justify-content:center"><button class="btn primary" id="crsBack" type="button">К уроку</button></div></div>`;
+    el().innerHTML = `<div class="panel stack crs-done"><div class="crs-score"><b>✓</b><span>разговорная практика пройдена</span></div><p style="text-align:center;margin:0;font-weight:600">Скажите эти фразы ещё раз сегодня вечером в реальной ситуации: так они закрепятся.</p><div class="row" style="justify-content:center"><button class="btn primary" id="crsBack" type="button">К уроку</button>${typeof SOURCE !== "undefined" && SOURCE !== "free" && window.startPracticeCheck ? `<button class="btn" id="crsChk" type="button">Проверить свою фразу</button>` : ""}</div></div>`;
+    const chk = $("#crsChk"); if (chk) chk.onclick = () => { CR.say = null; CR.screen = "lesson"; window.startPracticeCheck(l.gr.title); };
     $("#crsBack").onclick = () => { CR.say = null; CR.screen = "lesson"; renderCourse(true); top(); }; return;
   }
   const it = s.queue[0], done = s.total - s.queue.length;
