@@ -2510,7 +2510,10 @@ function bindAiPanel(){
     let key=$("#aiKey").value.replace(/\s+/g,""); if(!key){ const cur=AI.load(); if(cur && cur.provider===prov) key=cur.key; }
     if(!base){ msg.textContent="Адрес не разрешён. Допустимые сервисы: "+AI_HOSTS.join(", ")+"."; return; }
     if(!model){ msg.textContent="Укажите модель."; return; }
-    if(prov==="yandex" && !/^gpt:\/\/[a-z0-9]{10,}\/[\w.-]+(\/[\w.-]+)?$/i.test(model)){ msg.textContent="Для YandexGPT модель пишется так: gpt://ИДЕНТИФИКАТОР_КАТАЛОГА/yandexgpt/latest. Идентификатор каталога (folder id) есть в консоли Yandex Cloud."; return; }
+    if(prov==="yandex"){
+      const parts=model.replace(/^gpt:\/\//i,"").split("/");
+      if(!/^gpt:\/\//i.test(model) || parts.length<2 || !parts[0] || /[^\x21-\x7e]|[<>]/.test(model)){ msg.textContent="Модель для YandexGPT должна выглядеть так: gpt://b1g8xxxxxxxxxxxx/yandexgpt/latest (латиницей, без пробелов и скобок; вместо b1g8… ваш идентификатор каталога). Сейчас в поле: "+model; return; }
+    }
     if(!key){ msg.textContent="Вставьте ключ."; return; }
     if(/[^\x21-\x7e]/.test(key)){ msg.textContent="В ключе есть лишние символы. Скопируйте его ещё раз."; return; }
     btn.disabled=true; msg.textContent="Проверяю связь…";
