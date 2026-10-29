@@ -1209,3 +1209,32 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
 /* вкладки всегда поверх списка слов */
 .top{z-index:19!important}
 .toolbar,.row.toolbar{z-index:3!important}
+
+/* ===== Грамматика: конспект правил, примеров и ошибок ===== */
+.tabs button{min-width:0}
+@media (max-width:360px){.tabs button{font-size:10px;padding-inline:2px}}
+.glist{display:flex;flex-direction:column;gap:10px}
+.gitem{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;width:100%;text-align:left;font:inherit;color:var(--ink);background:var(--surface-2);border:0;border-radius:20px;padding:14px 18px;cursor:pointer;box-shadow:var(--shadow);transition:background .2s,transform .2s}
+.gitem:hover{background:var(--pink-soft);transform:translateY(-1px)}
+.gitem:active{transform:none}
+.gitem .gt{min-width:0;display:flex;flex-direction:column;gap:4px}
+.gitem .gt b{font-weight:700;font-size:16px;overflow-wrap:anywhere}
+.gitem .gs{color:var(--muted);font-size:13px;line-height:1.4;overflow-wrap:anywhere}
+.gitem .gm{flex:none;font-size:12px;font-weight:600;color:var(--muted);white-space:nowrap;padding-top:3px}
+.gitem .wtags{margin-top:2px}
+.gtitle{font-family:var(--f-display);font-weight:700;font-size:clamp(22px,4.5vw,30px);line-height:1.15;margin:0;overflow-wrap:anywhere}
+.gread .label{margin-bottom:6px}
+.grule{line-height:1.6;overflow-wrap:anywhere}
+.grule p{margin:0 0 8px}
+.grule p:last-child,.grule ul:last-child{margin-bottom:0}
+.grule ul{margin:0 0 8px;padding-left:22px}
+.grule li{margin-bottom:4px}
+.gmis{display:flex;flex-direction:column;gap:2px;border-left:3px solid var(--pink);padding-left:12px;overflow-wrap:anywhere}
+.gbad s{color:var(--bad);text-decoration-thickness:1.5px}
+.ggood{color:var(--good);font-weight:600}
+.grow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+.grow .icon-btn{margin-top:6px}
+.gcols{display:flex;flex-direction:column;gap:8px;min-width:0}
+@media (min-width:640px){.g-ex .gcols{display:grid;grid-template-columns:1fr 1fr}}
+#gEdit textarea.input{resize:vertical;line-height:1.5}
+#gActions{gap:12px}

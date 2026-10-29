@@ -9,6 +9,7 @@ const startOfDay = (t=Date.now()) => { const d=new Date(t); d.setHours(0,0,0,0);
 const dayKey = (t=Date.now()) => { const d=new Date(t); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
 const isCyr = s => /[а-яё]/i.test(s);
 const uid = () => "c-" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+const gid = () => "g-" + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 const SPK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>';
 function plural(n, one, few, many){ const m10=n%10, m100=n%100; if(m10===1&&m100!==11) return one; if(m10>=2&&m10<=4&&(m100<12||m100>14)) return few; return many; }
 function toast(msg, act){
@@ -31,7 +32,7 @@ function showStoreWarn(){
   if(!el){ el=document.createElement("div"); el.id="storeWarn"; el.className="storewarn"; el.setAttribute("role","alert"); const m=document.querySelector("main"); m.parentNode.insertBefore(el,m); }
   const cloud = typeof Store!=="undefined" && Store.mode!=="local";
   el.innerHTML=`<div><b>Браузер не даёт сохранить данные.</b> ${cloud?"Слова сохраняются в облаке, но быстрый доступ без сети может не работать.":"Слова пропадут, когда вы закроете вкладку. Возможно, память браузера заполнена, включён приватный режим или сайту запрещено хранить данные."}</div><div class="row"><button class="btn" type="button" id="swBackup">${cloud?"Понятно":"Скопировать копию колоды"}</button></div>`;
-  $("#swBackup").onclick=()=>{ if(cloud){ el.remove(); return; } const json=JSON.stringify({cards:allCards(), stats:Store.stats}); try{ navigator.clipboard.writeText(json).then(()=>toast("Колода скопирована: вставьте её в заметки")); }catch{ go("prefs"); toast("Откройте «Резервная копия» в настройках"); } };
+  $("#swBackup").onclick=()=>{ if(cloud){ el.remove(); return; } const json=JSON.stringify({cards:allCards(), notes:allNotes(), stats:Store.stats}); try{ navigator.clipboard.writeText(json).then(()=>toast("Колода скопирована: вставьте её в заметки")); }catch{ go("prefs"); toast("Откройте «Резервная копия» в настройках"); } };
 }
 try{ localStorage.setItem("koloda_probe","1"); localStorage.removeItem("koloda_probe"); }catch{ storageBad=true; }
 
@@ -51,6 +52,16 @@ function sanitizeCard(c){
     examples:(Array.isArray(c.examples)?c.examples:[]).slice(0,5).map(x=>{ const o={en:str(x?.en,300), ru:str(x?.ru,300)}; if(x?.src) o.src=str(x.src,8); if(x?.mt) o.mt=true; if(x?.pin) o.pin=true; return o; }).filter(x=>x.en),
     created:numv(c.created)||Date.now(), box:Math.max(0,Math.min(7,Math.round(numv(c.box)))), due:numv(c.due), reps:numv(c.reps), lapses:numv(c.lapses), fails:Math.max(0,Math.min(99,Math.round(numv(c.fails)))), errs:Math.max(0,Math.min(999,Math.round(numv(c.errs)))), last:numv(c.last), updated:numv(c.updated), demo:!!c.demo };
 }
+/* Заметка по грамматике: название, теги, правило, примеры, ошибки (❌→✅) и своя заметка */
+function sanitizeNote(n){
+  if(!n || typeof n!=="object" || !str(n.title,120).trim()) return null;
+  const id = /^g-[\w-]{1,62}$/.test(n.id) ? n.id : gid();
+  const list=(a,max)=>Array.isArray(a)?a.slice(0,max):[];
+  return { id, title:str(n.title,120).trim(), tags:cleanTags(n.tags), rule:str(n.rule,3000),
+    examples:list(n.examples,25).map(x=>({en:str(x?.en,200).trim(), ru:str(x?.ru,200).trim()})).filter(x=>x.en),
+    mistakes:list(n.mistakes,15).map(x=>({bad:str(x?.bad,200).trim(), good:str(x?.good,200).trim(), why:str(x?.why,200).trim()})).filter(x=>x.bad||x.good),
+    mine:str(n.mine,1500), created:numv(n.created)||Date.now(), updated:numv(n.updated) };
+}
 function sanitizeSettings(s){
   const o=structuredClone(DEFAULTS); if(!s||typeof s!=="object") return o;
   if([5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25].includes(+s.batch)) o.batch=+s.batch;
@@ -68,17 +79,20 @@ function sanitizeStats(s){
   const days={}; const d=s?.days; if(d&&typeof d==="object") for(const [k,v] of Object.entries(d)) if(/^\d{4}-\d{2}-\d{2}$/.test(k)&&v&&typeof v==="object") { days[k]={n:numv(v.n),learned:numv(v.learned),reviewed:numv(v.reviewed),rf:numv(v.rf),right:numv(v.right),total:numv(v.total)}; if(v.closed!==undefined) days[k].closed=!!v.closed; }
   return {days};
 }
+/* таблицы заметок может ещё не быть в базе (схему обновляют вручную): тогда заметки живут только на этом устройстве */
+const noteTableMissing = e => /^(PGRST205|42P01)$/.test(e?.code||"") || /schema cache|does not exist|could not find the table/i.test(e?.message||"");
 const Store = {
   mode:"local",            // local — гость, данные в браузере; claude — внутри Claude; supa — аккаунт
-  prefix:GUEST, cards:new Map(), settings:structuredClone(DEFAULTS), stats:{days:{}},
+  prefix:GUEST, cards:new Map(), notes:new Map(), settings:structuredClone(DEFAULTS), stats:{days:{}},
   // ---- кэш в браузере
   loadLocal(prefix=this.prefix){
     this.prefix=prefix;
     this.cards = new Map(lsGet(prefix+"cards", []).map(sanitizeCard).filter(Boolean).map(c=>[c.id,c]));
+    this.notes = new Map(lsGet(prefix+"notes", []).map(sanitizeNote).filter(Boolean).map(n=>[n.id,n]));
     this.settings = sanitizeSettings(lsGet(prefix+"settings", {}));
     this.stats = sanitizeStats(lsGet(prefix+"stats", {days:{}}));
   },
-  saveLocal(){ lsSet(this.prefix+"cards",[...this.cards.values()]); lsSet(this.prefix+"settings",this.settings); lsSet(this.prefix+"stats",this.stats); },
+  saveLocal(){ lsSet(this.prefix+"cards",[...this.cards.values()]); lsSet(this.prefix+"notes",[...this.notes.values()]); lsSet(this.prefix+"settings",this.settings); lsSet(this.prefix+"stats",this.stats); },
   clearLocal(prefix){ try{ for(const k of Object.keys(localStorage)) if(k.startsWith(prefix) && (prefix!==GUEST || !k.startsWith("koloda.u."))) localStorage.removeItem(k); }catch{} },
 
   // ---- Claude (версия-артефакт)
@@ -93,15 +107,18 @@ const Store = {
       const id = await user.id(); if(!id) return;
       const col = db.collection("data/users/" + id);
       const snap = await col.limit(1000).get();
-      const remote = new Map(); let settings=null, stats=null;
-      snap.docs.forEach(d=>{ const v=d.data(); if(!v) return; if(d.id==="settings") settings=v; else if(d.id==="stats") stats=v; else if(d.id.startsWith("c-")){ const c=sanitizeCard(v); if(c) remote.set(d.id, c); } });
+      const remote = new Map(), remoteNotes = new Map(); let settings=null, stats=null;
+      snap.docs.forEach(d=>{ const v=d.data(); if(!v) return; if(d.id==="settings") settings=v; else if(d.id==="stats") stats=v; else if(d.id.startsWith("c-")){ const c=sanitizeCard(v); if(c) remote.set(d.id, c); } else if(d.id.startsWith("g-")){ const n=sanitizeNote({...v, id:d.id}); if(n) remoteNotes.set(d.id, n); } });
       this.col = col; this.mode = "claude";
       if(remote.size===0 && this.cards.size>0){
         for(const c of this.cards.values()) await this.col.doc(c.id).set(c).catch(()=>{});
         await this.col.doc("settings").set(this.settings).catch(()=>{});
         await this.col.doc("stats").set(this.stats).catch(()=>{});
+        for(const n of this.notes.values()) await this.col.doc(n.id).set(n).catch(()=>{});
       } else {
         this.cards = remote;
+        if(remoteNotes.size) this.notes = remoteNotes;
+        else for(const n of this.notes.values()) this.col.doc(n.id).set(n).catch(()=>{});
         if(settings) this.settings = sanitizeSettings(settings);
         if(stats) this.stats = sanitizeStats(stats);
         this.saveLocal();
@@ -110,13 +127,15 @@ const Store = {
   },
 
   // ---- Supabase (аккаунт)
-  sb:null, user:null, pending:new Set(), pendingDel:new Set(), statePending:false, flushing:false, flushTimer:null, syncError:null, lastPull:0,
-  savePending(){ lsSet(this.prefix+"pending",{c:[...this.pending], d:[...this.pendingDel], s:this.statePending}); },
-  loadPending(){ const p=lsGet(this.prefix+"pending",{}); this.pending=new Set(p.c||[]); this.pendingDel=new Set(p.d||[]); this.statePending=!!p.s; },
+  sb:null, user:null, pending:new Set(), pendingDel:new Set(), pendingN:new Set(), pendingDelN:new Set(), notesRemote:undefined, statePending:false, flushing:false, flushTimer:null, syncError:null, lastPull:0,
+  savePending(){ lsSet(this.prefix+"pending",{c:[...this.pending], d:[...this.pendingDel], n:[...this.pendingN], nd:[...this.pendingDelN], s:this.statePending}); },
+  loadPending(){ const p=lsGet(this.prefix+"pending",{}); this.pending=new Set(p.c||[]); this.pendingDel=new Set(p.d||[]); this.pendingN=new Set(p.n||[]); this.pendingDelN=new Set(p.nd||[]); this.statePending=!!p.s; },
+  /* есть ли что отправить на сервер (заметки не считаем, пока в базе нет их таблицы) */
+  pendingAny(){ return !!(this.pending.size||this.pendingDel.size||this.statePending||(this.notesRemote!==false && (this.pendingN.size||this.pendingDelN.size))); },
   scheduleFlush(ms=700){ clearTimeout(this.flushTimer); this.flushTimer=setTimeout(()=>this.flush(), ms); },
   async flush(){
     if(this.mode!=="supa" || this.flushing) return;
-    if(!this.pending.size && !this.pendingDel.size && !this.statePending) return;
+    if(!this.pendingAny()) return;
     if(navigator.onLine===false){ setSync(); return; }
     this.flushing=true; setSync();
     const sb=this.sb, uidv=this.user.id;
@@ -135,6 +154,24 @@ const Store = {
           ids.slice(i,i+200).forEach(id=>{ if(!this.cards.has(id)) this.pending.delete(id); });
         }
       }
+      if(this.notesRemote!==false && (this.pendingN.size || this.pendingDelN.size)){
+        try{
+          if(this.pendingDelN.size){
+            const ids=[...this.pendingDelN];
+            for(let i=0;i<ids.length;i+=100){ const part=ids.slice(i,i+100); const {error}=await sb.from("grammar_notes").delete().in("id",part); if(error) throw error; part.forEach(x=>this.pendingDelN.delete(x)); }
+          }
+          if(this.pendingN.size){
+            const ids=[...this.pendingN];
+            for(let i=0;i<ids.length;i+=100){
+              const chunk=ids.slice(i,i+100), part=chunk.filter(id=>this.notes.has(id));
+              const sent=part.map(id=>[id,this.notes.get(id).updated]);
+              if(part.length){ const {error}=await sb.from("grammar_notes").upsert(part.map(id=>({user_id:uidv, id, data:this.notes.get(id)}))); if(error) throw error; }
+              sent.forEach(([id,u])=>{ if(this.notes.get(id)?.updated===u) this.pendingN.delete(id); });
+              chunk.forEach(id=>{ if(!this.notes.has(id)) this.pendingN.delete(id); });
+            }
+          }
+        }catch(e){ if(noteTableMissing(e)) this.notesRemote=false; else { if(/note limit/i.test(e?.message||"")) toast("Достигнут лимит в 2 000 заметок"); throw e; } }
+      }
       if(this.statePending){
         this.statePending=false;
         const {error}=await sb.from("user_state").upsert({user_id:uidv, settings:this.settings, stats:this.stats});
@@ -146,7 +183,7 @@ const Store = {
       if(/card limit/i.test(e?.message||"")) toast("Достигнут лимит в 10 000 карточек");
     }finally{
       this.flushing=false; this.savePending(); setSync();
-      if((this.pending.size||this.pendingDel.size||this.statePending) && !this.syncError) this.scheduleFlush(200);
+      if(this.pendingAny() && !this.syncError) this.scheduleFlush(200);
     }
   },
   async pull(){
@@ -158,6 +195,23 @@ const Store = {
     }
     const {data:st,error:e2}=await sb.from("user_state").select("settings,stats").maybeSingle();
     if(e2) throw e2;
+    if(this.notesRemote!==false){
+      try{
+        const nrows=[];
+        for(let from=0;;from+=1000){
+          const {data,error}=await sb.from("grammar_notes").select("id,data").range(from,from+999);
+          if(error) throw error;
+          nrows.push(...data); if(data.length<1000) break;
+        }
+        const rem=new Map(); nrows.forEach(r=>{ const n=sanitizeNote({...r.data, id:r.id}); if(n) rem.set(n.id,n); });
+        for(const [id,rn] of rem){
+          if(this.pendingDelN.has(id)) continue;
+          const ln=this.notes.get(id);
+          if(!ln || (!this.pendingN.has(id) && (rn.updated||0)>=(ln.updated||0))) this.notes.set(id,rn);
+        }
+        for(const id of [...this.notes.keys()]) if(!rem.has(id) && !this.pendingN.has(id)) this.notes.delete(id);
+      }catch(e){ if(noteTableMissing(e)) this.notesRemote=false; else throw e; }
+    }
     const remote=new Map(); rows.forEach(r=>{ const c=sanitizeCard({...r.data, id:r.id}); if(c) remote.set(c.id,c); });
     for(const [id,rc] of remote){
       if(this.pendingDel.has(id)) continue;
@@ -177,9 +231,16 @@ const Store = {
     this.user=user; this.mode="supa";
     const guestCards=lsGet(GUEST+"cards",[]).map(sanitizeCard).filter(Boolean);
     const guestStats=sanitizeStats(lsGet(GUEST+"stats",{}));
+    const guestNotes=lsGet(GUEST+"notes",[]).map(sanitizeNote).filter(Boolean);
     this.loadLocal("koloda.u."+user.id+"."); this.loadPending();
     renderAll();
     try{ await this.pull(); }catch(e){ this.syncError=e; }
+    if(guestNotes.length){ // перенос заметок, написанных до входа
+      const haveT=new Set([...this.notes.values()].map(n=>norm(n.title)));
+      let m=0;
+      for(const n of guestNotes){ if(haveT.has(norm(n.title))) continue; n.id=gid(); n.updated=Date.now(); this.notes.set(n.id,n); this.pendingN.add(n.id); m++; }
+      if(m){ this.saveLocal(); this.savePending(); if(!guestCards.length){ this.clearLocal(GUEST); toast(`${m} ${plural(m,"заметка перенесена","заметки перенесены","заметок перенесено")} в аккаунт`); } }
+    }
     if(guestCards.length){ // перенос слов, добавленных до входа
       const have=new Set([...this.cards.values()].map(c=>norm(c.en)));
       let n=0;
@@ -191,10 +252,10 @@ const Store = {
     renderAll(); this.flush();
   },
   useGuest(){
-    this.user=null; this.mode="local"; this.pending=new Set(); this.pendingDel=new Set(); this.statePending=false; this.syncError=null;
+    this.user=null; this.mode="local"; this.pending=new Set(); this.pendingDel=new Set(); this.pendingN=new Set(); this.pendingDelN=new Set(); this.statePending=false; this.syncError=null;
     this.loadLocal(GUEST); renderAll();
   },
-  hasUnsynced(){ return this.mode==="supa" && (this.pending.size||this.pendingDel.size||this.statePending); },
+  hasUnsynced(){ return this.mode==="supa" && this.pendingAny(); },
 
   // ---- общий интерфейс
   write(kind, id){
@@ -238,6 +299,17 @@ const Store = {
   lazy:new Set(), lazyT:null,
   saveLazy(c){ c.updated=Date.now(); this.cards.set(c.id,c); this.lazy.add(c.id); clearTimeout(this.lazyT); this.lazyT=setTimeout(()=>this.flushLazy(),1000); },
   flushLazy(){ clearTimeout(this.lazyT); const list=[...this.lazy].map(id=>this.cards.get(id)).filter(Boolean); this.lazy.clear(); if(list.length) this.saveMany(list); },
+  /* ---- заметки по грамматике ---- */
+  syncNote(id){
+    if(this.mode==="claude") this.col.doc(id).set(this.notes.get(id)).catch(()=>{});
+    else if(this.mode==="supa"){ this.pendingN.add(id); this.pendingDelN.delete(id); this.savePending(); this.scheduleFlush(); }
+  },
+  saveNote(n){ n.updated=Date.now(); this.notes.set(n.id,n); this.saveLocal(); this.syncNote(n.id); },
+  deleteNote(id){
+    this.notes.delete(id); this.saveLocal();
+    if(this.mode==="claude") this.col.doc(id).delete().catch(()=>{});
+    else if(this.mode==="supa"){ this.pendingN.delete(id); this.pendingDelN.add(id); this.savePending(); this.scheduleFlush(); }
+  },
   saveSettings(){ this.write("settings"); },
   saveStats(){ this.write("stats"); },
 };
@@ -2053,13 +2125,16 @@ function renderStats(){
 function importBackup(text){
   let d; try{ d=JSON.parse(text); }catch{ toast("Не получилось прочитать JSON — проверьте, что скопирован целиком"); return; }
   const raw=Array.isArray(d)?d:(Array.isArray(d?.cards)?d.cards:null);
-  if(!raw){ toast("В файле нет карточек колоды"); return; }
+  const rawN=Array.isArray(d?.notes)?d.notes:[];
+  if(!raw && !rawN.length){ toast("В файле нет карточек колоды"); return; }
   const list=[]; let kept=0;
-  raw.slice(0,10000).forEach(r=>{ const c=sanitizeCard(r); if(!c) return; const ex=Store.cards.get(c.id); if(ex && (ex.updated||0)>(c.updated||0) && (ex.reps||0)>=(c.reps||0)){ kept++; return; } list.push(c); });
+  (raw||[]).slice(0,10000).forEach(r=>{ const c=sanitizeCard(r); if(!c) return; const ex=Store.cards.get(c.id); if(ex && (ex.updated||0)>(c.updated||0) && (ex.reps||0)>=(c.reps||0)){ kept++; return; } list.push(c); });
   if(list.length) Store.saveMany(list);
+  let notesIn=0;
+  rawN.slice(0,2000).forEach(r=>{ const n=sanitizeNote(r); if(!n) return; const ex=Store.notes.get(n.id); if(ex && (ex.updated||0)>=(n.updated||0)) return; Store.notes.set(n.id,n); Store.saveLocal(); Store.syncNote(n.id); notesIn++; });
   const ds=sanitizeStats(d?.stats); if(Object.keys(ds.days).length){ Store.stats.days={...ds.days, ...Store.stats.days}; Store.saveStats(); }
   const n=list.length; renderAll();
-  toast(`Загружено ${n} ${plural(n,"карточка","карточки","карточек")}`+(kept?`, ${kept} уже свежее в колоде — не тронуты`:""));
+  toast(`Загружено ${n} ${plural(n,"карточка","карточки","карточек")}`+(notesIn?` и ${notesIn} ${plural(notesIn,"заметка","заметки","заметок")}`:"")+(kept?`, ${kept} уже свежее в колоде — не тронуты`:""));
 }
 function renderPrefs(){
   const s=S(), el=$("#v-prefs");
@@ -2123,13 +2198,13 @@ function renderPrefs(){
   el.querySelectorAll("[data-seg]").forEach(g=>g.onclick=e=>{ const b=e.target.closest("button"); if(!b) return; const v=b.dataset.v; s[g.dataset.seg]=/^\d+$/.test(v)?+v:v; save(); renderPrefs(); });
   el.querySelectorAll("[data-mode]").forEach(i=>i.onchange=()=>{ s.modes[i.dataset.mode]=i.checked; if(!Object.values(s.modes).some(Boolean)){ s.modes.choice=true; toast("Хотя бы один формат нужен — оставлен выбор перевода"); renderPrefs(); } save(); });
   $("#exp").onclick=()=>{
-    const json=JSON.stringify({cards:allCards(), stats:Store.stats},null,0);
+    const json=JSON.stringify({cards:allCards(), notes:allNotes(), stats:Store.stats},null,0);
     const done=()=>toast("Колода скопирована");
     const fallback=()=>{ $("#dataArea").innerHTML=`<textarea class="input" id="expText" readonly>${esc(json)}</textarea><p class="small muted">Выделите текст и скопируйте вручную.</p>`; $("#expText").select(); };
     try{ navigator.clipboard.writeText(json).then(done,fallback); }catch{ fallback(); }
   };
   $("#expFile").onclick=()=>{
-    const json=JSON.stringify({v:2, exported:new Date().toISOString(), cards:allCards(), stats:Store.stats});
+    const json=JSON.stringify({v:3, exported:new Date().toISOString(), cards:allCards(), notes:allNotes(), stats:Store.stats});
     try{
       const url=URL.createObjectURL(new Blob([json],{type:"application/json"})), a=document.createElement("a");
       a.href=url; a.download="koloda-"+dayKey()+".json"; document.body.appendChild(a); a.click(); a.remove();
@@ -2319,7 +2394,7 @@ function bindAccountPanel(el){
   if($("#pwBtn")) $("#pwBtn").onclick=()=>openNewPassword(false);
   if($("#delAcc")) $("#delAcc").onclick=()=>{
     const area=$("#acctArea");
-    area.innerHTML=`<div class="feedback no small stack" style="gap:8px"><span>Аккаунт и все ${Store.cards.size} ${plural(Store.cards.size,"карточка","карточки","карточек")} будут удалены с сервера без возможности восстановления. Чтобы подтвердить, напишите <b>УДАЛИТЬ</b>.</span>
+    area.innerHTML=`<div class="feedback no small stack" style="gap:8px"><span>Аккаунт, все ${Store.cards.size} ${plural(Store.cards.size,"карточка","карточки","карточек")} и заметки по грамматике будут удалены с сервера без возможности восстановления. Чтобы подтвердить, напишите <b>УДАЛИТЬ</b>.</span>
       <input class="input" id="delConfirm" autocomplete="off"><div class="row"><button class="btn" id="delNo">Отмена</button><button class="btn danger" id="delYes" disabled>Удалить навсегда</button></div></div>`;
     $("#delConfirm").oninput=e=>$("#delYes").disabled = e.target.value.trim().toUpperCase()!=="УДАЛИТЬ";
     $("#delNo").onclick=()=>area.innerHTML="";
@@ -2337,8 +2412,8 @@ function openPrivacy(back){
   openModal(`<h2 class="mtitle">Конфиденциальность и источники</h2>
   <div class="privacy">
     <h3>Что хранится</h3>
-    <p>Если вы не вошли — ничего не уходит на сервер: карточки, настройки и статистика лежат только в вашем браузере.</p>
-    <p>Если вы вошли — на сервере хранятся ваш email, карточки (слова, переводы, примеры), настройки и статистика занятий. Больше ничего: ни имени, ни телефона, ни истории посещений.</p>
+    <p>Если вы не вошли — ничего не уходит на сервер: карточки, заметки, настройки и статистика лежат только в вашем браузере.</p>
+    <p>Если вы вошли — на сервере хранятся ваш email, карточки (слова, переводы, примеры), заметки по грамматике, настройки и статистика занятий. Больше ничего: ни имени, ни телефона, ни истории посещений.</p>
     <h3>Где и как</h3>
     <p>Данные лежат в базе Supabase в Европейском союзе (Франкфурт). Соединение зашифровано (HTTPS), данные на сервере тоже хранятся в зашифрованном виде. Пароль хранится только в виде необратимого хеша — его не видит никто, включая автора сайта.</p>
     <p>Каждая строчка базы привязана к вашему аккаунту, а правила доступа на сервере пропускают к ней только вас. Другие пользователи не могут ни прочитать, ни изменить ваши карточки.</p>
@@ -2469,10 +2544,11 @@ function endTour(next){
 let tabSyncT=null;
 window.addEventListener("storage", e=>{
   if(!e.key || Store.mode==="claude" || !e.key.startsWith(Store.prefix)) return;
-  const k=e.key.slice(Store.prefix.length); if(!["cards","settings","stats"].includes(k)) return;
+  const k=e.key.slice(Store.prefix.length); if(!["cards","notes","settings","stats"].includes(k)) return;
   clearTimeout(tabSyncT);
   tabSyncT=setTimeout(()=>{
     Store.cards=new Map(lsGet(Store.prefix+"cards",[]).map(sanitizeCard).filter(Boolean).map(c=>[c.id,c]));
+    Store.notes=new Map(lsGet(Store.prefix+"notes",[]).map(sanitizeNote).filter(Boolean).map(n=>[n.id,n]));
     Store.settings=sanitizeSettings(lsGet(Store.prefix+"settings",{}));
     Store.stats=sanitizeStats(lsGet(Store.prefix+"stats",{days:{}}));
     if(sess){ // убираем из идущей тренировки слова, которых больше нет
@@ -2487,9 +2563,175 @@ window.addEventListener("storage", e=>{
   },120);
 });
 
+/* ============ grammar notes ============ */
+let gMode="list", gId=null, gDraft=null, gTag="", gQuery="", gSort="new";
+const NOTE_MAX_EX=25, NOTE_MAX_MIS=15;
+const NOTE_DEMO = { title:"Present Perfect vs Past Simple", tags:["времена"],
+  rule:"**Past Simple** — действие закончилось в конкретное время в прошлом. Время названо или понятно из контекста: yesterday, in 2020, last week.\n**Present Perfect** (have / has + третья форма глагола) — важен результат или опыт к настоящему моменту. Времени в предложении нет, либо оно ещё не закончилось: ever, never, just, already, yet.\n- Названо конкретное время → Past Simple.\n- Время не важно, важна связь с настоящим → Present Perfect.",
+  examples:[{en:"I've been to London twice.",ru:"Я дважды был в Лондоне."},{en:"I was in London in 2020.",ru:"Я был в Лондоне в 2020 году."},{en:"Susan has lost her key.",ru:"Сьюзен потеряла ключ (его до сих пор нет)."},{en:"Susan lost her key yesterday.",ru:"Сьюзен вчера потеряла ключ."}],
+  mistakes:[{bad:"I have seen him yesterday.",good:"I saw him yesterday.",why:"Со словом yesterday нужен Past Simple: время названо."}], mine:"" };
+/* простое и безопасное форматирование: **жирный**, строки с «- » становятся списком */
+function fmtText(t){
+  const inline=x=>esc(x).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
+  let out="", inList=false;
+  for(const raw of String(t||"").split("\n")){
+    const m=raw.match(/^\s*[-•]\s+(.*)$/);
+    if(m){ if(!inList){ out+="<ul>"; inList=true; } out+="<li>"+inline(m[1])+"</li>"; }
+    else { if(inList){ out+="</ul>"; inList=false; } if(raw.trim()) out+="<p>"+inline(raw)+"</p>"; }
+  }
+  return out+(inList?"</ul>":"");
+}
+const allNotes = () => [...Store.notes.values()];
+const noteTagCounts = () => { const m=new Map(); allNotes().forEach(n=>n.tags.forEach(t=>m.set(t,(m.get(t)||0)+1))); return [...m].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])); };
+function noteText(n){ return norm([n.title, n.tags.join(" "), n.rule, n.mine, ...n.examples.map(x=>x.en+" "+x.ru), ...n.mistakes.map(x=>x.bad+" "+x.good+" "+x.why)].join(" ")); }
+function filteredNotes(){
+  const q=norm(gQuery); let l=allNotes();
+  if(gTag) l=l.filter(n=>n.tags.includes(gTag));
+  if(q) l=l.filter(n=>noteText(n).includes(q));
+  return gSort==="az" ? l.sort((a,b)=>a.title.localeCompare(b.title,"en")) : l.sort((a,b)=>(b.updated||b.created)-(a.updated||a.created));
+}
+function renderGrammar(){
+  const el=$("#v-grammar");
+  if(gMode==="edit" && $("#gEdit")) return;           // не стираем недописанную заметку при фоновых обновлениях
+  if(gMode==="edit" && !gDraft) gMode="list";
+  if(gMode==="read" && !Store.notes.has(gId)) gMode="list";
+  if(gMode==="read") return renderNoteRead(el);
+  if(gMode==="edit") return renderNoteEdit(el);
+  renderNoteList(el);
+}
+function gGo(mode, id=null){ gMode=mode; gId=id; if(mode!=="edit") gDraft=null; renderGrammar(); window.scrollTo(0,0); }
+function noteStatusHtml(){
+  return Store.mode==="supa" && Store.notesRemote===false
+    ? `<div class="feedback no small">Заметки пока хранятся только на этом устройстве: в базе ещё нет таблицы для них. Чтобы они синхронизировались с аккаунтом, нужно один раз обновить схему базы (supabase/schema.sql).</div>` : "";
+}
+function renderNoteList(el){
+  const tags=noteTagCounts(); if(gTag && !tags.some(([t])=>t===gTag)) gTag="";
+  const total=Store.notes.size;
+  el.innerHTML=`<div class="sec-head" style="margin-top:4px"><h2>Грамматика</h2><button class="pill-link" type="button" id="gNew">Новая заметка</button></div>
+  ${noteStatusHtml()}
+  ${total?`<div class="row toolbar">
+    <input class="input" id="gSearch" placeholder="Поиск по названию, правилу, примеру или тегу" style="flex:1;min-width:180px" aria-label="Поиск по заметкам" value="${esc(gQuery)}">
+    <select class="input sel" id="gSortSel" aria-label="Сортировка"><option value="new"${gSort==="new"?" selected":""}>Сначала новые</option><option value="az"${gSort==="az"?" selected":""}>По алфавиту</option></select>
+  </div>
+  ${tags.length?`<div class="filters tagfilters" id="gTags"><span class="label">Теги</span>${tags.map(([t,n])=>`<button type="button" class="tagchip${t===gTag?" on":""}" data-gtag="${esc(t)}" aria-pressed="${t===gTag}">${esc(t)} <small>${n}</small></button>`).join("")}</div>`:""}`:""}
+  <div id="gBody"></div>`;
+  $("#gNew").onclick=()=>startNoteEdit(null);
+  if(total){
+    $("#gSearch").oninput=e=>{ gQuery=e.target.value; fillNoteList(); };
+    $("#gSortSel").onchange=e=>{ gSort=e.target.value; fillNoteList(); };
+    el.querySelectorAll("[data-gtag]").forEach(b=>b.onclick=()=>{ gTag = gTag===b.dataset.gtag ? "" : b.dataset.gtag; renderNoteList(el); });
+  }
+  fillNoteList();
+}
+function fillNoteList(){
+  const body=$("#gBody"); if(!body) return;
+  if(!Store.notes.size){
+    body.innerHTML=`<div class="panel empty stack" style="align-items:center;text-align:center;gap:12px"><div><b>Здесь будет ваш конспект по грамматике</b><div class="small muted" style="margin-top:4px">Записывайте правило своими словами, примеры с переводом и частые ошибки. Одна тема — одна заметка.</div></div><div class="row" style="justify-content:center"><button class="btn primary" type="button" id="gNew2">Написать первую заметку</button><button class="btn" type="button" id="gDemo" ${tipAttr("Добавит готовую заметку, чтобы посмотреть, как всё выглядит. Её можно изменить или удалить.")}>Пример заметки</button></div></div>`;
+    $("#gNew2").onclick=()=>startNoteEdit(null);
+    $("#gDemo").onclick=()=>{ const n=sanitizeNote({...NOTE_DEMO, id:gid(), created:Date.now()}); Store.saveNote(n); gGo("read", n.id); };
+    return;
+  }
+  const list=filteredNotes();
+  if(!list.length){
+    const q=gQuery.trim();
+    body.innerHTML=`<div class="panel empty stack" style="align-items:center;text-align:center;gap:12px"><div class="muted">${q?`По запросу «${esc(q)}» ничего не нашлось.`:`С тегом «${esc(gTag)}» пока нет заметок.`}${q&&gTag?" Возможно, мешает выбранный тег.":""}</div><button class="btn" type="button" id="gReset">Сбросить поиск и теги</button></div>`;
+    $("#gReset").onclick=()=>{ gQuery=""; gTag=""; renderNoteList($("#v-grammar")); };
+    return;
+  }
+  const snip=n=>{ const t=n.rule.replace(/\*\*/g,"").replace(/^\s*[-•]\s+/gm,"").replace(/\s+/g," ").trim(); return t.length>120?t.slice(0,117).trimEnd()+"…":t; };
+  body.innerHTML=`<div class="small muted" style="margin-bottom:6px">${list.length===Store.notes.size?`${list.length} ${plural(list.length,"заметка","заметки","заметок")}`:`${list.length} из ${Store.notes.size}`}</div>
+  <div class="glist">${list.map(n=>`<button type="button" class="gitem" data-gopen="${n.id}"><span class="gt"><b>${esc(n.title)}</b>${snip(n)?`<span class="gs">${esc(snip(n))}</span>`:""}${n.tags.length?`<span class="wtags">${n.tags.map(t=>`<span class="tagchip sm">${esc(t)}</span>`).join("")}</span>`:""}</span><span class="gm">${n.examples.length?`${n.examples.length} ${plural(n.examples.length,"пример","примера","примеров")}`:""}</span></button>`).join("")}</div>`;
+  body.querySelectorAll("[data-gopen]").forEach(b=>b.onclick=()=>gGo("read", b.dataset.gopen));
+}
+function renderNoteRead(el){
+  const n=Store.notes.get(gId);
+  el.innerHTML=`<div class="row"><button class="btn ghost" type="button" id="gBack">← Все заметки</button></div>
+  <div class="panel stack gread">
+    <div class="row" style="justify-content:space-between;align-items:flex-start;flex-wrap:nowrap"><h2 class="gtitle">${esc(n.title)}</h2><button class="btn" type="button" id="gEditBtn">Изменить</button></div>
+    ${n.tags.length?`<div class="wtags">${n.tags.map(t=>`<button type="button" class="tagchip sm" data-gtag2="${esc(t)}" ${tipAttr("Показать все заметки с тегом «"+t+"»")}>${esc(t)}</button>`).join("")}</div>`:""}
+    ${n.rule.trim()?`<div><div class="label">Правило</div><div class="grule">${fmtText(n.rule)}</div></div>`:""}
+    ${n.examples.length?`<div><div class="label">Примеры</div><ul class="ex-list" style="margin-top:8px">${n.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div>${x.ru?`<div class="ru">${esc(x.ru)}</div>`:""}</div></li>`).join("")}</ul></div>`:""}
+    ${n.mistakes.length?`<div><div class="label">Частые ошибки</div><div class="stack" style="gap:10px;margin-top:8px">${n.mistakes.map(x=>`<div class="gmis">${x.bad?`<div class="gbad"><span aria-hidden="true">❌</span> <s>${esc(x.bad)}</s></div>`:""}${x.good?`<div class="ggood"><span aria-hidden="true">✅</span> ${esc(x.good)}</div>`:""}${x.why?`<div class="small muted">${esc(x.why)}</div>`:""}</div>`).join("")}</div></div>`:""}
+    ${n.mine.trim()?`<div><div class="label">Моя заметка</div><div class="grule">${fmtText(n.mine)}</div></div>`:""}
+    ${!n.rule.trim()&&!n.examples.length&&!n.mistakes.length&&!n.mine.trim()?`<div class="small muted">Заметка пока пустая. Нажмите «Изменить», чтобы добавить правило и примеры.</div>`:""}
+  </div>`;
+  $("#gBack").onclick=()=>gGo("list");
+  $("#gEditBtn").onclick=()=>startNoteEdit(n.id);
+  el.querySelectorAll("[data-gtag2]").forEach(b=>b.onclick=()=>{ hideTip(); gTag=b.dataset.gtag2; gQuery=""; gGo("list"); });
+}
+function startNoteEdit(id){
+  gId=id; gMode="edit";
+  gDraft = id ? structuredClone(Store.notes.get(id)) : {title:"",tags:[],rule:"",examples:[{en:"",ru:""}],mistakes:[],mine:""};
+  renderGrammar(); window.scrollTo(0,0);
+  if(!id) setTimeout(()=>$("#g-title")?.focus(),50);
+}
+const RM_SVG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+const exRow=(x={})=>`<div class="grow g-ex"><div class="gcols"><input class="input" data-k="en" maxlength="200" placeholder="English" autocomplete="off" spellcheck="false" aria-label="Пример на английском" value="${esc(x.en||"")}"><input class="input" data-k="ru" maxlength="200" placeholder="Перевод" autocomplete="off" aria-label="Перевод примера" value="${esc(x.ru||"")}"></div><button type="button" class="icon-btn sm" data-rm aria-label="Убрать пример">${RM_SVG}</button></div>`;
+const misRow=(x={})=>`<div class="grow g-mis"><div class="gcols"><input class="input" data-k="bad" maxlength="200" placeholder="❌ Как говорят неправильно" autocomplete="off" spellcheck="false" aria-label="Неправильный вариант" value="${esc(x.bad||"")}"><input class="input" data-k="good" maxlength="200" placeholder="✅ Как правильно" autocomplete="off" spellcheck="false" aria-label="Правильный вариант" value="${esc(x.good||"")}"><input class="input" data-k="why" maxlength="200" placeholder="Почему (необязательно)" autocomplete="off" aria-label="Пояснение" value="${esc(x.why||"")}"></div><button type="button" class="icon-btn sm" data-rm aria-label="Убрать ошибку">${RM_SVG}</button></div>`;
+function collectNote(){
+  const rows=(sel,keys)=>[...document.querySelectorAll(sel)].map(r=>Object.fromEntries(keys.map(k=>[k,(r.querySelector(`[data-k="${k}"]`)?.value||"").trim()])));
+  return { title:$("#g-title").value.trim(), tags:parseTags($("#g-tags").value), rule:$("#g-rule").value.trim(), mine:$("#g-mine").value.trim(),
+    examples:rows("#g-exs .g-ex",["en","ru"]).filter(x=>x.en||x.ru), mistakes:rows("#g-mis .g-mis",["bad","good","why"]).filter(x=>x.bad||x.good||x.why) };
+}
+function syncNoteTags(){
+  const cur=parseTags($("#g-tags").value), all=noteTagCounts().map(([t])=>t).slice(0,16);
+  $("#g-tagchips").innerHTML=all.map(t=>`<button type="button" class="tagchip${cur.includes(t)?" on":""}" data-addntag="${esc(t)}" aria-pressed="${cur.includes(t)}">${esc(t)}</button>`).join("");
+}
+function renderNoteEdit(el){
+  const d=gDraft, isNew=!gId;
+  el.innerHTML=`<div class="row"><button class="btn ghost" type="button" id="gCancelTop">← ${isNew?"Отмена":"К заметке"}</button></div>
+  <div class="panel stack" id="gEdit">
+    <h2 class="mtitle">${isNew?"Новая заметка":"Изменить заметку"}</h2>
+    <label class="f">Название<input class="input" id="g-title" maxlength="120" autocomplete="off" placeholder="например: Present Perfect vs Past Simple" value="${esc(d.title)}"></label>
+    <div><label class="f"><span>Теги <span class="muted">(необязательно, через запятую)</span></span><input class="input" id="g-tags" autocomplete="off" maxlength="200" placeholder="например: времена, артикли" value="${esc(d.tags.join(", "))}"></label><div class="tagchips" id="g-tagchips"></div></div>
+    <label class="f"><span>Правило <span class="muted">— своими словами. Строка с «- » станет пунктом списка, **так** выделится жирным</span></span><textarea class="input" id="g-rule" rows="6" maxlength="3000" placeholder="Когда используется, как строится, чем отличается от русского">${esc(d.rule)}</textarea></label>
+    <div class="stack" style="gap:8px"><div class="label">Примеры</div><div class="stack" style="gap:10px" id="g-exs">${d.examples.map(exRow).join("")}</div><div><button class="btn" type="button" id="g-addex">+ Пример</button></div></div>
+    <div class="stack" style="gap:8px"><div class="label">Частые ошибки</div><div class="stack" style="gap:10px" id="g-mis">${d.mistakes.map(misRow).join("")}</div><div><button class="btn" type="button" id="g-addmis">+ Ошибка ❌ → ✅</button></div></div>
+    <label class="f">Моя заметка<textarea class="input" id="g-mine" rows="3" maxlength="1500" placeholder="Что у вас путается, как запомнить, на что обратить внимание">${esc(d.mine)}</textarea></label>
+    <div class="row" id="gActions" style="justify-content:space-between">
+      <div class="row">${isNew?"":`<button class="btn danger" type="button" id="gDel">Удалить</button>`}</div>
+      <div class="row"><button class="btn" type="button" id="gCancel">Отмена</button><button class="btn primary" type="button" id="gSave">Сохранить</button></div>
+    </div>
+  </div>`;
+  syncNoteTags();
+  const initial=JSON.stringify(collectNote());
+  const dirty=()=>JSON.stringify(collectNote())!==initial;
+  const leave=()=>{ gDraft=null; gMode=isNew?"list":"read"; renderGrammar(); window.scrollTo(0,0); };
+  const tryLeave=()=>{
+    if(!dirty()){ leave(); return; }
+    $("#gActions").innerHTML=`<span class="small">Выйти без сохранения?</span><div class="row"><button class="btn" type="button" id="gStay">Остаться</button><button class="btn danger" type="button" id="gOut">Выйти</button></div>`;
+    $("#gStay").onclick=()=>renderNoteEditActions(isNew, tryLeave, save, del);
+    $("#gOut").onclick=leave;
+  };
+  const save=()=>{
+    const c=collectNote();
+    if(!c.title){ toast("Дайте заметке название"); $("#g-title").focus(); return; }
+    const base=isNew?{id:gid(), created:Date.now()}:Store.notes.get(gId);
+    if(!base){ toast("Эта заметка уже удалена"); leave(); return; }
+    const n=sanitizeNote({...base, ...c}); if(!n){ toast("Не получилось сохранить заметку"); return; }
+    Store.saveNote(n); gDraft=null; toast("Сохранено"); gGo("read", n.id);
+  };
+  const del=()=>{
+    const n=Store.notes.get(gId); if(!n) return;
+    $("#gActions").innerHTML=`<span class="small">Удалить «${esc(n.title)}» насовсем?</span><div class="row"><button class="btn" type="button" id="gNo">Нет</button><button class="btn danger" type="button" id="gYes">Удалить</button></div>`;
+    $("#gNo").onclick=()=>renderNoteEditActions(isNew, tryLeave, save, del);
+    $("#gYes").onclick=()=>{ const snap=structuredClone(n); Store.deleteNote(n.id); gDraft=null; gGo("list"); toast("Заметка удалена", {label:"Отменить", fn:()=>{ Store.saveNote(snap); renderGrammar(); toast("Заметка возвращена"); }}); };
+  };
+  $("#gCancelTop").onclick=tryLeave; $("#gCancel").onclick=tryLeave; $("#gSave").onclick=save; if($("#gDel")) $("#gDel").onclick=del;
+  $("#g-tags").addEventListener("input",syncNoteTags);
+  $("#g-addex").onclick=()=>{ if(document.querySelectorAll("#g-exs .g-ex").length>=NOTE_MAX_EX){ toast("Достаточно: не больше "+NOTE_MAX_EX+" примеров в заметке"); return; } $("#g-exs").insertAdjacentHTML("beforeend",exRow()); $("#g-exs .g-ex:last-child input").focus(); };
+  $("#g-addmis").onclick=()=>{ if(document.querySelectorAll("#g-mis .g-mis").length>=NOTE_MAX_MIS){ toast("Достаточно: не больше "+NOTE_MAX_MIS+" ошибок в заметке"); return; } $("#g-mis").insertAdjacentHTML("beforeend",misRow()); $("#g-mis .g-mis:last-child input").focus(); };
+  $("#gEdit").addEventListener("click",e=>{ const rm=e.target.closest("[data-rm]"); if(rm) rm.closest(".grow").remove(); });
+}
+function renderNoteEditActions(isNew, tryLeave, save, del){
+  $("#gActions").innerHTML=`<div class="row">${isNew?"":`<button class="btn danger" type="button" id="gDel">Удалить</button>`}</div><div class="row"><button class="btn" type="button" id="gCancel">Отмена</button><button class="btn primary" type="button" id="gSave">Сохранить</button></div>`;
+  $("#gCancel").onclick=tryLeave; $("#gSave").onclick=save; if($("#gDel")) $("#gDel").onclick=del;
+}
+document.addEventListener("click",e=>{ const b=e.target.closest("[data-addntag]"); if(!b) return; const inp=$("#g-tags"); if(!inp) return; const t=b.dataset.addntag; let cur=parseTags(inp.value); cur=cur.includes(t)?cur.filter(x=>x!==t):[...cur,t]; inp.value=cur.join(", "); syncNoteTags(); });
+
 /* ============ routing ============ */
 let view="learn";
-const VIEWS=["learn","words","stats","prefs"];
+const VIEWS=["learn","words","grammar","stats","prefs"];
 function go(v){
   if(!VIEWS.includes(v)) v="learn"; view=v;
   VIEWS.forEach(x=>$("#v-"+x).hidden = x!==v);
@@ -2498,7 +2740,7 @@ function go(v){
   try{ history.replaceState(null,"","#"+v); }catch{}
   renderView(); window.scrollTo(0,0);
 }
-function renderView(){ ({learn:renderLearn, words:renderList, stats:renderStats, prefs:renderPrefs})[view](); }
+function renderView(){ ({learn:renderLearn, words:renderList, grammar:renderGrammar, stats:renderStats, prefs:renderPrefs})[view](); }
 /* одноразово: подтягиваем сроки старых слов под новые, более короткие интервалы; слова с ошибками возвращаем в повтор */
 function migrateSched(){
   if(S().sched>=3 || !Store.cards.size) return;
