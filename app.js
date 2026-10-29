@@ -387,7 +387,7 @@ const AI_PROVIDERS = {
   anthropic:{label:"Anthropic (Claude)", base:"https://api.anthropic.com", model:"claude-haiku-5-5"},
   yandex:{label:"YandexGPT (Yandex Cloud)", base:"https://llm.api.cloud.yandex.net/v1", model:"gpt://ВАШ_FOLDER_ID/yandexgpt/latest"},
 };
-const AI_HOSTS = ["api.openai.com","api.anthropic.com","openrouter.ai","generativelanguage.googleapis.com","llm.api.cloud.yandex.net"];
+const AI_HOSTS = ["api.openai.com","api.anthropic.com","openrouter.ai","generativelanguage.googleapis.com","llm.api.cloud.yandex.net"]; // плюс ваш Cloudflare Worker (*.workers.dev) для Яндекса
 function parseAiJson(text){
   const t=String(text).trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/,"");
   const i=t.search(/[\[{]/); if(i<0) throw {code:"ai_parse"};
@@ -410,7 +410,7 @@ const AI = {
   },
   clear(){ try{ localStorage.removeItem(AI_CFG_KEY); sessionStorage.removeItem(AI_SESSION_KEY); }catch{} },
   forgetSession(){ try{ sessionStorage.removeItem(AI_SESSION_KEY); }catch{} },
-  allowedBase(base){ try{ const u=new URL(base); return u.protocol==="https:" && AI_HOSTS.includes(u.hostname) ? u.href.replace(/\/+$/,"") : null; }catch{ return null; } },
+  allowedBase(base){ try{ const u=new URL(base); return u.protocol==="https:" && (AI_HOSTS.includes(u.hostname)||u.hostname.endsWith(".workers.dev")) ? u.href.replace(/\/+$/,"") : null; }catch{ return null; } },
   async call(cfg, prompt){
     const base=this.allowedBase(cfg.base); if(!base) throw {code:"ai_host"};
     const ac=new AbortController(), t=setTimeout(()=>ac.abort(), 90000);
@@ -2489,7 +2489,7 @@ function aiPanel(){
     <div class="setrow"><div class="lbl"><b>${on?"Подключена":"Не подключена"}</b><span>${on?esc(AI_PROVIDERS[prov].label)+" · "+model+". Нейросеть дополняет карточки: недостающий перевод, транскрипцию и примеры на вашем уровне. Настоящие примеры из открытых источников берутся в первую очередь.":"Подключите свою нейросеть, и Колода добавит недостающий перевод и примеры на вашем уровне. Без неё работают открытые источники: Викисловарь, Tatoeba и другие."}</span></div></div>
     <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Сервис</b><span>OpenAI-совместимый подходит для OpenAI, OpenRouter и Gemini (его OpenAI-режим)</span></div>
       <select class="input" id="aiProv" style="max-width:230px;min-height:40px">${Object.entries(AI_PROVIDERS).map(([k,v])=>`<option value="${k}" ${k===prov?"selected":""}>${esc(v.label)}</option>`).join("")}</select></div>
-    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Адрес API</b><span>Разрешены только: ${AI_HOSTS.join(", ")}</span></div><input class="input" id="aiBase" autocomplete="off" spellcheck="false" value="${base}" maxlength="200"></div>
+    <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Адрес API</b><span>Разрешены: ${AI_HOSTS.join(", ")} и свой адрес *.workers.dev</span></div><input class="input" id="aiBase" autocomplete="off" spellcheck="false" value="${base}" maxlength="200"></div>
     <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Модель</b><span>название, как в вашем сервисе; небольшая быстрая модель подойдёт</span></div><input class="input" id="aiModel" autocomplete="off" spellcheck="false" value="${model}" maxlength="100"></div>
     <div class="setrow" style="flex-wrap:wrap"><div class="lbl"><b>Ключ API</b><span>${on?"ключ сохранён, вставьте новый, чтобы заменить":"вставьте ключ из кабинета сервиса"}</span></div><input class="input" id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="${on?"•••• сохранён":"sk-…"}" maxlength="300"></div>
     <div class="setrow"><div class="lbl"><b>Запомнить ключ на этом устройстве</b><span>Если выключено, ключ забудется, когда вы закроете вкладку</span></div><input type="checkbox" id="aiRemember" ${raw.remember?"checked":""} aria-label="Запомнить ключ на этом устройстве"></div>
