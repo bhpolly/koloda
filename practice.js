@@ -54,6 +54,7 @@
     ["talk", "Диалог", "Живой разговор на выбранную тему. В конце разбор твоих ошибок.", "💬"],
     ["diff", "Чем отличаются", "Два похожих слова или конструкции: в чём разница и где ловушка.", "≠"],
     ["text", "Текст в карточки", "Вставь абзац из статьи или сериала, получи слова по своему уровню.", "＋"],
+    ["story", "Рассказ из слов", "Короткая история с твоими изучаемыми словами и пояснения, где и как их употреблять.", "📖"],
     ["weak", "Слабые места", "Новые задания на слова, где ты чаще ошибаешься.", "!"],
     ["week", "Итог недели", "Что повторялось, что получается лучше и что делать дальше.", "★"],
   ];
@@ -68,7 +69,7 @@
   }
   function open(m, preset) {
     P.req++; P.screen = m; P.preset = preset || null;
-    ({ check: vCheck, talk: vTalkMenu, diff: vDiff, text: vText, weak: vWeak, week: vWeek })[m]();
+    ({ check: vCheck, talk: vTalkMenu, diff: vDiff, text: vText, story: vStory, weak: vWeak, week: vWeek })[m]();
     window.scrollTo(0, 0);
   }
 
@@ -296,6 +297,77 @@ Rules: use only the data above. If there is little data, say so honestly.`);
     };
   }
 
+
+  /* ---------- Рассказ из слов ---------- */
+  const ST_KEY = "koloda_stories";
+  const GENRES = [["everyday", "Случай из жизни"], ["dialogue", "Диалог"], ["letter", "Письмо другу"], ["work", "Рабочая ситуация"], ["trip", "Поездка"]];
+  const GENRE_EN = { everyday: "a short everyday story with a beginning, a small problem and an ending", dialogue: "a short dialogue between two people, written as lines starting with a name and a colon", letter: "an informal letter or message to a friend", work: "a short story about a situation at work or study", trip: "a short story about a trip or travel" };
+  function readStories() { try { const a = JSON.parse(localStorage.getItem(ST_KEY)); return Array.isArray(a) ? a : []; } catch { return []; } }
+  function saveStories(a) { try { localStorage.setItem(ST_KEY, JSON.stringify(a.slice(0, 12))); } catch {} }
+  const markUp = en => esc(en).replace(/\*\*(.+?)\*\*/g, '<mark class="stw">$1</mark>');
+  function storyCandidates() {
+    const rank = c => (c.box > 0 && isDue(c)) ? 0 : (!c.box ? 1 : 2);
+    return allCards().filter(c => (c.box || 0) < 4 && c.en).sort((a, b) => rank(a) - rank(b) || (a.due || 0) - (b.due || 0)).slice(0, 24);
+  }
+  function vStory() {
+    const cands = storyCandidates(), saved = readStories();
+    const SS = P.st || (P.st = { ids: null, genre: "everyday" });
+    const presetIds = P.preset?.ids;
+    if (presetIds && presetIds.length) { SS.ids = new Set(presetIds.filter(id => cardOf(id)).slice(0, 8)); P.preset = null; for (const id of SS.ids) if (!cands.some(c => c.id === id)) { const c = cardOf(id); if (c) cands.unshift(c); } }
+    if (!SS.ids) SS.ids = new Set(cands.slice(0, 8).map(c => c.id));
+    if (cands.length < 3 && !saved.length) { shell("Рассказ из слов", `<div class="panel"><p class="muted" style="margin:0">Для рассказа нужно хотя бы 3 изучаемых слова. Добавь слова в «Слова» и начни обучение, потом возвращайся.</p></div>`); return; }
+    shell("Рассказ из слов", `<div class="panel stack">
+      <p class="muted small" style="margin:0">Выбери от 3 до 8 слов. Нейросеть напишет короткий рассказ на твоём уровне (${esc(lvl())}), где эти слова встречаются в естественных ситуациях, и объяснит, где и как их употреблять.</p>
+      <div class="row" id="stWords">${cands.map(c => `<button class="chip ${SS.ids.has(c.id) ? "lang" : ""}" type="button" data-id="${esc(c.id)}" aria-pressed="${SS.ids.has(c.id)}">${esc(c.en)}</button>`).join("")}</div>
+      <div class="small muted" id="stCnt"></div>
+      <div class="row"><select class="input sel" id="stGenre" aria-label="Жанр">${GENRES.map(g => `<option value="${g[0]}" ${g[0] === SS.genre ? "selected" : ""}>${esc(g[1])}</option>`).join("")}</select>
+      <button class="btn primary" id="prGo" type="button">Написать рассказ</button></div></div><div id="prOut"></div>
+      ${saved.length ? `<div class="panel stack"><div class="label">Сохранённые рассказы</div><div class="crs-rows">${saved.map((x, i) => `<button class="crs-row" type="button" data-sv="${i}"><span class="chip lang">${i + 1}</span><span class="crs-rt"><b>${esc(x.title)}</b><span>${esc((x.words || []).join(", "))}</span></span><span></span></button>`).join("")}</div></div>` : ""}`);
+    const cnt = () => { const n = SS.ids.size; $("#stCnt").textContent = n < 3 ? `Выбрано ${n}. Нужно хотя бы 3.` : n > 8 ? `Выбрано ${n}. Максимум 8.` : `Выбрано слов: ${n}`; $("#prGo").disabled = n < 3 || n > 8; };
+    cnt();
+    el().querySelectorAll("#stWords [data-id]").forEach(b => b.onclick = () => { const id = b.dataset.id; if (SS.ids.has(id)) SS.ids.delete(id); else SS.ids.add(id); b.classList.toggle("lang", SS.ids.has(id)); b.setAttribute("aria-pressed", SS.ids.has(id)); cnt(); });
+    $("#stGenre").onchange = () => { SS.genre = $("#stGenre").value; };
+    el().querySelectorAll("[data-sv]").forEach(b => b.onclick = () => { const x = saved[+b.dataset.sv]; if (x) storyShow(x, true); });
+    $("#prGo").onclick = async () => {
+      const cs = [...SS.ids].map(cardOf).filter(Boolean); if (cs.length < 3) return;
+      const my = ++P.req, btn = $("#prGo"); busy(btn, true);
+      const words = cs.map(c => `"${cut(c.en, 60)}"${(typeof glossOf === "function" && glossOf(c)) ? " (" + cut(glossOf(c), 50) + ")" : ""}`).join("; ");
+      try {
+        const j = await ask(`${BASE()}
+Write ${GENRE_EN[SS.genre] || GENRE_EN.everyday} for this learner (CEFR ${lvl()}). 90-150 words, simple natural sentences, no rare words besides the target ones.
+Target words and phrases: ${words}.
+Use EVERY target word or phrase at least once, in a context that makes its meaning and typical use clear. You may change the grammatical form (tense, plural) but keep the phrase recognisable. Wrap each use of a target word in **double asterisks**, e.g. "She **ended up** in Paris".
+Reply with ONLY JSON: {"title":"short English title","paras":[{"en":"1-3 sentences with **marked** target words","ru":"Russian translation of those sentences"}],"uses":[{"w":"target word exactly as given","form":"the form used in the story","where":"in Russian, 1-2 sentences: in what situations people use this word, with what words it combines, and one thing to watch out for"}]}
+Rules: one entry in "uses" for each target word; write all explanations in Russian; the story must be natural, not a list of sentences about words.`);
+        if (my !== P.req) return;
+        const paras = list(j?.paras, 8).map(x => ({ en: cut(x?.en, 500), ru: cut(x?.ru, 600) })).filter(x => x.en);
+        if (!paras.length) throw { code: "ai_parse" };
+        const uses = list(j?.uses, 10).map(x => ({ w: cut(x?.w, 60), form: cut(x?.form, 60), where: cut(x?.where, 400) })).filter(x => x.w && x.where);
+        const missing = cs.filter(c => !paras.some(x => looseHit(x.en.replace(/\*\*/g, ""), c.en))).map(c => c.en);
+        storyShow({ title: cut(j?.title, 80) || "Рассказ", paras, uses, words: cs.map(c => c.en), missing, t: Date.now() }, false);
+      } catch (e) { if (my === P.req) $("#prOut").innerHTML = noteBox("neutral", esc(errText(e))); }
+      finally { busy(btn, false, "Написать рассказ"); }
+    };
+  }
+  function storyShow(S0, isSaved) {
+    P.curStory = S0;
+    const en = S0.paras.map(x => x.en.replace(/\*\*/g, "")).join(" ");
+    shell("Рассказ из слов", `<div class="panel stack">
+      <h2 class="crs-h" style="margin:0">${esc(S0.title)}</h2>
+      <div class="stack" id="stText" style="gap:10px">${S0.paras.map(x => `<p class="st-p" style="margin:0;font-size:17px;line-height:1.6">${markUp(x.en)}</p><p class="muted small st-ru" style="margin:0" hidden>${esc(x.ru)}</p>`).join("")}</div>
+      <div class="row"><button class="btn" id="stSay" type="button">🔊 Послушать</button><button class="btn" id="stTr" type="button">Показать перевод</button></div>
+      ${(S0.missing && S0.missing.length) ? noteBox("neutral", `В этот раз нейросеть не использовала: <b>${esc(S0.missing.join(", "))}</b>. Нажми «Другой рассказ».`) : ""}</div>
+      <div class="panel stack"><div class="label">Где и как это использовать</div>
+      ${(S0.uses || []).map(u => `<div class="stack" style="gap:4px"><div class="row"><span class="chip lang">${esc(u.w)}</span>${u.form && u.form.toLowerCase() !== u.w.toLowerCase() ? `<span class="small muted">в рассказе: ${esc(u.form)}</span>` : ""}</div><div class="small">${esc(u.where)}</div></div>`).join("") || `<p class="muted small" style="margin:0">Пояснений нет.</p>`}</div>
+      <div class="row"><button class="btn primary" id="stAgain" type="button">Другой рассказ</button>${isSaved ? `<button class="btn" id="stDel" type="button">Удалить из сохранённых</button>` : `<button class="btn" id="stSave" type="button">Сохранить</button>`}</div>`);
+    let tr = false;
+    $("#stTr").onclick = () => { tr = !tr; el().querySelectorAll(".st-ru").forEach(n => n.hidden = !tr); $("#stTr").textContent = tr ? "Скрыть перевод" : "Показать перевод"; };
+    $("#stSay").onclick = () => { if (typeof speak === "function") speak(en, "en"); };
+    $("#stAgain").onclick = () => open("story");
+    const sv = $("#stSave"); if (sv) sv.onclick = () => { const a = readStories().filter(x => x.t !== S0.t); a.unshift({ title: S0.title, paras: S0.paras, uses: S0.uses, words: S0.words, missing: [], t: S0.t }); saveStories(a); sv.disabled = true; sv.textContent = "Сохранено"; };
+    const dl = $("#stDel"); if (dl) dl.onclick = () => { saveStories(readStories().filter(x => x.t !== S0.t)); open("story"); };
+  }
+
   /* ---------- вход ---------- */
   window.renderPractice = function () {
     if (!el()) return;
@@ -303,5 +375,6 @@ Rules: use only the data above. If there is little data, say so honestly.`);
     if (P.screen === "home") return home();
     /* при фоновых обновлениях не стираем то, что человек пишет */
   };
+  window.startPracticeStory = function (ids) { go("practice"); open("story", { ids: Array.isArray(ids) ? ids.slice(0, 8) : [] }); };
   window.startPracticeCheck = function (ctx) { go("practice"); open("check", { ctx: String(ctx || "").slice(0, 120) }); };
 })();
