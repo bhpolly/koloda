@@ -1305,3 +1305,5 @@ body::after{display:block!important;content:"";position:fixed;inset:-4% -6%!impo
   #tabs button{font-size:10px;padding-left:1px;padding-right:1px;letter-spacing:-.02em;flex:1 1 auto}
   #tabs button svg{width:20px;height:20px}
 }
+
+.stw{background:var(--accent-soft);color:inherit;border-radius:6px;padding:0 4px;font-weight:700}
