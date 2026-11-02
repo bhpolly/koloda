@@ -549,6 +549,7 @@ function phraseVariants(en){
   const core=coreOf(en); if(!core) return [];
   const w=core.split(/\s+/), out=[core];
   if(/^to\s/i.test(String(en).trim())) verbForms(w[0]).forEach(f=>out.push([f,...w.slice(1)].join(" ")));
+  else if(w.length===1 && /^[a-z]{3,}$/i.test(w[0])) { verbForms(w[0]).forEach(f=>out.push(f)); out.push(w[0]+"s"); }   // одно слово: берём и его формы (trains, trained, training)
   return [...new Set(out.map(x=>x.toLowerCase()))];
 }
 const phraseHit=(sentence, vars)=>{ const s=" "+sentence.toLowerCase().replace(/[’‘`´]/g,"'").replace(/[^a-z' ]+/g," ").replace(/\s+/g," ")+" "; return vars.some(v=>s.includes(" "+v+" ")); };
@@ -604,8 +605,8 @@ function clozeFor(c){
 }
 
 /* --- Tatoeba: примеры с переводом на русский --- */
-async function tatoebaSearch(q, withRu){
-  const base="https://tatoeba.org/en/api_v0/search?from=eng&sort=relevance&query="+encodeURIComponent(q);
+async function tatoebaSearch(q, withRu, page=1){
+  const base="https://tatoeba.org/en/api_v0/search?from=eng&sort=relevance"+(page>1?"&page="+page:"")+"&query="+encodeURIComponent(q);
   let r, j;
   try{ r=await fetchT(base+(withRu?"&to=rus&trans_filter=limit":"")); }catch{ return {items:[], state:"net"}; }
   if(!r.ok) return {items:[], state:"net"};
@@ -627,9 +628,12 @@ async function tatoebaExamples(phrase, want=2){
     const t=await tatoebaSearch(q,true); asked++; if(t.state==="net") state="net"; else state="ok"; take(t.items);
   }
   if(withRu.length<want && state!=="net"){ const t=await tatoebaSearch(vars[0],false); if(t.state==="net") state="net"; take(t.items); }
+  // у однословных слов часто несколько значений: берём вторую страницу, чтобы было из чего выбрать пример к нужному значению
+  if(state!=="net" && withRu.length<12 && !/\s/.test(coreOf(phrase))){ const t=await tatoebaSearch(vars[0],true,2); if(t.state==="ok") take(t.items); }
   const score=x=>Math.abs(x.en.length-55);
   withRu.sort((a,b)=>score(a)-score(b)); noRu.sort((a,b)=>score(a)-score(b));
-  return {items:[...withRu,...noRu].slice(0,want), state};
+  const all=[...withRu,...noRu];
+  return {items:all.slice(0,want), all, state};
 }
 
 /* --- Викисловарь: примеры и транскрипция, в том числе для фраз и фразовых глаголов --- */
@@ -638,13 +642,16 @@ async function wiktDefs(term){
   if(r.status===404) return {state:"notfound", examples:[], pos:""};
   if(!r.ok) return {state:"net", examples:[], pos:""};
   try{ j=await r.json(); }catch{ return {state:"net", examples:[], pos:""}; }
-  const secs=Array.isArray(j?.en)?j.en:[]; const ex=[];
-  for(const sec of secs) for(const d of (sec.definitions||[])){
-    for(const e of (d.examples||[])) ex.push(stripHtml(e));
-    for(const p of (d.parsedExamples||[])) ex.push(stripHtml(p?.example));
+  const secs=Array.isArray(j?.en)?j.en:[]; const ex=[], byPos={};
+  for(const sec of secs){
+    const pk=str(sec.partOfSpeech,40).toLowerCase();
+    for(const d of (sec.definitions||[])){
+      const got=[]; for(const e of (d.examples||[])) got.push(stripHtml(e)); for(const p of (d.parsedExamples||[])) got.push(stripHtml(p?.example));
+      got.filter(Boolean).forEach(g=>{ ex.push(g); if(pk) (byPos[pk]||(byPos[pk]=[])).push(g); });
+    }
   }
   const pos=str(secs[0]?.partOfSpeech,40).toLowerCase();
-  return {state: secs.length?"ok":"notfound", examples:[...new Set(ex.filter(Boolean))], pos};
+  return {state: secs.length?"ok":"notfound", examples:[...new Set(ex.filter(Boolean))], pos, byPos};
 }
 /* текст страницы Викисловаря берём один раз на слово: из него достаём и транскрипцию, и переводы, и определения */
 const wiktCache=new Map();
@@ -698,24 +705,27 @@ function cleanWiki(t){
 }
 /* русские переводы из блока Translations: группы по смыслу ({{trans-top|значение}}) */
 function wikTranslations(en){
-  const groups=[];
-  const blocks=en.match(/={3,5}\s*Translations\s*={3,5}[\s\S]*?(?=\n={2,5}[^=]|$)/g)||[];
-  for(const blk of blocks){
-    let gloss="";
-    for(const raw of blk.split("\n")){
-      const line=raw.trim();
-      const tt=/^\{\{trans-top\|(.*?)\}\}$/i.exec(line);
-      if(tt){ gloss=cleanWiki(tt[1].split("|")[0]); continue; }
-      if(/^\{\{trans-top\}\}/i.test(line)){ gloss=""; continue; }
-      const ru=/^\*+\s*Russian\s*:\s*(.*)$/i.exec(line); if(!ru) continue;
-      const terms=[];
-      for(const m of ru[1].matchAll(/\{\{(?:t\+?|t-simple|tt\+?|t-check|t\+check)\|ru\|([^|}]+)/g)){
-        const t=cleanWiki(m[1]).replace(/\u0301/g,""); if(t && !t.includes("=") && isCyr(t) && t.length<=60 && !terms.some(x=>norm(x)===norm(t))) terms.push(t);
-      }
-      if(terms.length){
-        const g=groups.find(x=>x.gloss===gloss);
-        if(g) terms.forEach(t=>{ if(!g.terms.some(x=>norm(x)===norm(t))) g.terms.push(t); }); else groups.push({gloss, terms});
-      }
+  const groups=[]; let pos="", inTr=false, gloss="";
+  for(const raw of en.split("\n")){
+    const line=raw.trim();
+    const h=/^(={2,5})\s*([^=].*?)\s*\1$/.exec(line);
+    if(h){
+      if(/^translations$/i.test(h[2])){ inTr=true; gloss=""; }
+      else { inTr=false; const pm=WIK_POS.exec(line); if(pm) pos=pm[1].toLowerCase(); }
+      continue;
+    }
+    if(!inTr) continue;
+    const tt=/^\{\{trans-top\|(.*?)\}\}$/i.exec(line);
+    if(tt){ gloss=cleanWiki(tt[1].split("|")[0]); continue; }
+    if(/^\{\{trans-top\}\}/i.test(line)){ gloss=""; continue; }
+    const ru=/^\*+\s*Russian\s*:\s*(.*)$/i.exec(line); if(!ru) continue;
+    const terms=[];
+    for(const m of ru[1].matchAll(/\{\{(?:t\+?|t-simple|tt\+?|t-check|t\+check)\|ru\|([^|}]+)/g)){
+      const t=cleanWiki(m[1]).replace(/\u0301/g,""); if(t && !t.includes("=") && isCyr(t) && t.length<=60 && !terms.some(x=>norm(x)===norm(t))) terms.push(t);
+    }
+    if(terms.length){
+      const g=groups.find(x=>x.gloss===gloss && x.pos===pos);
+      if(g) terms.forEach(t=>{ if(!g.terms.some(x=>norm(x)===norm(t))) g.terms.push(t); }); else groups.push({gloss, terms, pos});
     }
   }
   return groups;
@@ -771,6 +781,49 @@ async function cmuIpa(core){
   return "/"+parts.join(" ")+"/";
 }
 
+/* Примеры к конкретному значению. У слова вроде «train» значения разные (поезд, тренироваться), а источники примеров о значениях не знают.
+   Поэтому пример берём, только если русский перевод предложения содержит слово из нужного значения, или это пример из нужной части речи в Викисловаре,
+   или по соседним словам видно нужную часть речи. Лучше показать меньше примеров, чем про другое значение. */
+const RU_STOP=new Set(["быть","свой","себя","этот","который","что","как"]);
+const ruTokens = t => String(t||"").toLowerCase().split(/[^а-яё]+/).filter(Boolean);
+const ruStems = t => ruTokens(t).filter(w=>w.length>=3 && !RU_STOP.has(w)).map(w=>w.slice(0,Math.max(3,Math.min(5,w.length-2))));
+const posClass = p => /verb/.test(p||"") ? "verb" : /noun/.test(p||"") ? "noun" : (p||"");
+const PG_DET=new Set("a an the this that these those my your his her our their its some any each every another no one two three many few several last next".split(" "));
+const PG_PREP=new Set("of in on at by for from with into onto about after before during".split(" "));
+const PG_VERB=new Set("i you we they he she it who to can could will would shall should may might must not never always often usually also just do does did don't doesn't didn't have has had been being was were is are am be get got".split(" "));
+function posGuess(en, core){
+  const toks=String(en).toLowerCase().replace(/[’‘`´]/g,"'").split(/[^a-z']+/).filter(Boolean);
+  const w=String(core).toLowerCase(), last=w.slice(-1);
+  const forms=[w,w+"s",w+"es",w+"ed",w+"d",w+"ing",w.endsWith("e")?w.slice(0,-1)+"ing":w+last+"ing",w+last+"ed"];
+  for(let i=0;i<toks.length;i++){
+    if(!forms.includes(toks[i])) continue;
+    const p=toks[i-1]||"";
+    if(PG_DET.has(p)||PG_PREP.has(p)) return "noun";
+    if(PG_VERB.has(p) || (i===0 && toks[i]===w)) return "verb";
+    return "";
+  }
+  return "";
+}
+function fitExamples(info, s, core, otherRu=[]){
+  const mine=ruStems(s.ru), others=otherRu.flatMap(ruStems).filter(x=>!mine.includes(x));
+  const cls=posClass(s.pos), single=!/\s/.test(core), vars=phraseVariants(core), got=new Map();
+  const put=(x,fit)=>{ const k=norm(x.en); if(!got.has(k) || got.get(k).fit<fit) got.set(k,{x,fit}); };
+  for(const x of (info.pool||[])){
+    const toks=ruTokens(x.ru), hit=st=>toks.some(t=>t.startsWith(st));
+    if(mine.some(hit)) put(x,3);
+    else if(others.some(hit)) continue;
+    else if(single && (cls==="verb"||cls==="noun")){ const g=posGuess(x.en,core); if(g===cls) put(x,1); }
+  }
+  if(cls) for(const [k,list] of Object.entries(info.byPos||{})) if(posClass(k)===cls) for(const e of list){
+    if(goodSentence(e) && phraseHit(e,vars) && !(single && posGuess(e,core) && posGuess(e,core)!==cls)) put({en:e, ru:"", src:"wik"},2);
+  }
+  const base={en:core};
+  return [...got.values()].sort((a,b)=>b.fit-a.fit || exScore(a.x,base)-exScore(b.x,base)).map(o=>({...o.x})).slice(0,5);
+}
+function examplesFor(info, s, en, force){
+  if(!(info.multi||force) || (!s.ru && !s.pos)) return (info.examples||[]).map(x=>({...x}));
+  return fitExamples(info, s, coreOf(en), s.others||[]);
+}
 async function enrichInfo(en){
   const key=norm(en);
   if(infoCache.has(key)) return infoCache.get(key);
@@ -791,13 +844,16 @@ async function enrichInfo(en){
     if(!out.meanings?.length && wl.defs?.length){ out.meanings=meaningsFromDefs(wl.defs); if(!out.pos) out.pos=wl.defs[0].pos; }
     if(!out.ipa){ const c=await cmuIpa(core); if(c){ out.ipa=c; out.src.ipa="офлайн-словарь"; } }
     // собираем кандидатов из всех источников и оставляем самые понятные для выбранного уровня
-    out.tat=t.state; const cand=t.items.slice();
+    out.tat=t.state; const cand=(t.all||t.items).slice();
     const add=(list, hitOnly, src)=>{ for(const e of list){ const x=typeof e==="string"?e:e.en; if(!goodSentence(x)||(hitOnly&&!phraseHit(x,vars))||cand.some(y=>norm(y.en)===norm(x))) continue; cand.push({en:x, ru:"", src}); } };
     add(wd.examples, true, "wik");
     if(cand.length<2) add(wd.examples, false, "wik");
     if(cand.length<2 && d.state==="ok") add(d.examples, false, "dict");
     const pseudo={en};
-    out.examples = cand.map(x=>({x, s:exScore(x,pseudo)})).sort((a,b)=>a.s-b.s).map(o=>o.x).slice(0,5);
+    const ranked = cand.map(x=>({x, s:exScore(x,pseudo)})).sort((a,b)=>a.s-b.s).map(o=>o.x);
+    out.examples = ranked.slice(0,5);
+    out.pool = ranked; out.byPos = wd.byPos||{};
+    out.multi = (wl.groups||[]).length>1 || new Set((wl.defs||[]).map(d=>posClass(d.pos)).filter(Boolean)).size>1;
     out.src.ex = out.examples.length ? [...new Set(out.examples.map(x=>SRC_NAME[x.src]).filter(Boolean))].join(", ") : "";
     return out;
   })();
@@ -809,9 +865,9 @@ async function enrichInfo(en){
 }
 function applyInfo(c, info){
   if(!c.ipa && info.ipa) c.ipa=info.ipa;
-  if(!c.pos && info.pos) c.pos=info.pos;
   if(!c.audio && info.audio) c.audio=info.audio;
-  if(!c.examples?.length && info.examples.length) c.examples=info.examples.map(x=>({...x}));
+  if(!c.examples?.length) c.examples=examplesFor(info,c,c.en);
+  if(!c.pos && info.pos && !info.multi) c.pos=info.pos;
   return c;
 }
 function infoHint(info){
@@ -968,10 +1024,12 @@ async function liteSenses(text){
   for(const g of wk.groups){
     const terms=g.terms.filter(t=>!seen.has(norm(t))).slice(0,3); if(!terms.length) continue;
     terms.forEach(t=>seen.add(norm(t)));
-    out.push({...base(), ru:terms.join(", "), def:g.gloss, src:"wik"});
+    out.push({...base(), ru:terms.join(", "), def:g.gloss, src:"wik", pos:g.pos||""});
   }
   let mmErr=mm.e||null;
-  const addMt=j=>FREE.variants(j, text).forEach(v=>{ if(!seen.has(norm(v)) && out.length<8){ seen.add(norm(v)); out.push({...base(), ru:v, mt:true, src:"mm"}); } });
+  const hasVerb=wk.defs.some(d=>/verb/.test(d.pos)), onlyVerb=hasVerb && !wk.defs.some(d=>/noun/.test(d.pos));
+  const mtPos=v=> /(ть|ться|ти|тись)$/i.test(v.trim().split(/\s+/)[0]) && hasVerb ? "verb" : (onlyVerb ? "verb" : "");
+  const addMt=j=>FREE.variants(j, text).forEach(v=>{ if(!seen.has(norm(v)) && out.length<8){ seen.add(norm(v)); out.push({...base(), ru:v, mt:true, src:"mm", pos:mtPos(v)}); } });
   if(mm.v) addMt(mm.v);
   // глагол без «to»: «end up» MyMemory часто переводит буквально, с «to» обычно точнее
   if(!mmErr && wk.defs.some(d=>/verb/.test(d.pos)) && !/^to\s/i.test(text.trim())){
@@ -997,7 +1055,7 @@ async function lookup(){
       const [r, info] = await Promise.all([askJSON(lookupPrompt(text, lang)), lang==="en" && ownAi ? enrichInfo(text).catch(()=>null) : Promise.resolve(null)]);
       senses = (r?.senses||[]).filter(s=>s && s.en && s.ru).slice(0,6).map(s=>{
         let ex=(s.examples||[]).filter(x=>x&&x.en).slice(0,3).map(x=>ownAi?{...x, src:"ai"}:x);
-        const real=(info?.examples||[]).find(e=>e.en && !ex.some(y=>norm(y.en)===norm(e.en)));
+        const real=(info ? examplesFor(info,s,text,(r?.senses||[]).length>1) : []).find(e=>e.en && !ex.some(y=>norm(y.en)===norm(e.en)));
         if(real){ ex = ex.length>=3 ? [...ex.slice(0,2), {...real}] : [...ex, {...real}]; }
         return {...s, def:str(s.def,300), src:ownAi?"ai":undefined, examples:ex, ipa:s.ipa||info?.ipa||"", audio:s.audio||info?.audio||""};
       });
@@ -1010,7 +1068,7 @@ async function lookup(){
       infoP.then(info=>{
         if(addState!==st0) return;
         st0.info=info; st0.meanings=info.meanings; st0.infoLoading=false;
-        st0.senses?.forEach(sn=>{ sn.ipa=info.ipa; sn.pos=info.pos; sn.audio=info.audio; sn.examples=info.examples.map(x=>({...x})); });
+        const many=st0.senses.length>1; st0.senses.forEach(sn=>{ sn.ipa=info.ipa; if(!sn.pos && !many && !info.multi) sn.pos=info.pos; sn.audio=info.audio; sn.others=st0.senses.filter(o=>o!==sn).map(o=>o.ru); sn.examples=examplesFor(info,sn,text,many); });
         refreshDraft();
       }).catch(()=>{ if(addState===st0){ st0.infoLoading=false; refreshDraft(); } });
       addState.infoLoading=true;
@@ -1066,7 +1124,7 @@ function renderAdd(){
       <div class="row" style="justify-content:space-between;gap:8px"><div><div style="font-size:20px;font-weight:700">${esc(c.en)}</div>
       <div class="row" style="gap:8px">${c.ipa?`<span class="ipa">${esc(c.ipa)}</span>`:""}<span class="muted">${esc(glossOf(c))}</span></div>${c.def&&c.ru?`<div class="small muted">${esc(c.def)}</div>`:""}</div>${sayBtn(c.en,"en",false)}</div>
       ${c.examples.length?`<ul class="ex-list">${c.examples.map(x=>`<li>${sayBtn(x.en)}<div><div class="en">${esc(x.en)}</div><div class="ru">${esc(x.ru||"")}</div></div></li>`).join("")}</ul>`
-        : `<div class="row small muted">Примеров пока нет. <button type="button" class="btn ghost" id="fetchEx" style="min-height:32px;padding:4px 8px">Подобрать примеры</button></div>`}
+        : `<div class="row small muted">${st.senses?.length>1||st.info?.multi?"Примеров именно к этому значению не нашлось: в открытых источниках они в основном про другие значения слова. Можно вписать свой пример в карточке или подключить нейросеть (Pro).":"Примеров пока нет."} <button type="button" class="btn ghost" id="fetchEx" style="min-height:32px;padding:4px 8px">Подобрать примеры</button></div>`}
       ${st.infoLoading ? `<div class="small muted">Подбираю транскрипцию и примеры…</div>` : (!c.ipa || !c.examples.length) && st.info ? `<div class="small muted">${esc(infoHint(st.info))}</div>` : ""}
       <button type="button" class="btn primary wide" id="saveCard">${sameEn?(newRu.length?"Добавить перевод к существующей":"Добавить теги к существующей"):"Сохранить карточку"}</button>
     </div>`;
@@ -1080,7 +1138,7 @@ function renderAdd(){
     if(st.picks.includes(i) && v.free && !v.enriched){ // RU→EN: подтягиваем транскрипцию, аудио и примеры для выбранного английского слова
       v.enriched=true; renderAdd();
       const info=await enrichInfo(v.en);
-      v.ipa=info.ipa; v.pos=info.pos; v.audio=info.audio; v.examples=info.examples.map(x=>({...x})); st.info=info; st.meanings=info.meanings;
+      v.ipa=info.ipa; if(!info.multi) v.pos=info.pos; v.audio=info.audio; v.examples=examplesFor(info,{ru:st.text,pos:""},v.en); st.info=info; st.meanings=info.meanings;
     }
     renderAdd(); if(st.picks.includes(i)) autoSpeak(v.en,"en");
   });
@@ -1117,8 +1175,9 @@ async function fetchManualExamples(){
     else {
       const info=await enrichInfo(c.en);
       addState.info=info;
-      if(!info.examples.length) toast(infoHint(info)||"Примеры не нашлись, их можно вписать в карточке вручную");
-      addState.manualEx = {ipa:info.ipa, pos:info.pos, audio:info.audio, examples:info.examples.map(x=>({...x}))};
+      const exs=examplesFor(info,c,c.en,addState.senses?.length>1);
+      if(!exs.length) toast(info.examples.length ? "К этому значению подходящих примеров не нашлось: в открытых источниках они про другие значения. Впишите свой пример в карточке." : (infoHint(info)||"Примеры не нашлись, их можно вписать в карточке вручную"));
+      addState.manualEx = {ipa:info.ipa, pos:info.multi?(c.pos||""):info.pos, audio:info.audio, examples:exs};
     }
   }
   catch(e){ toast(lookupErrorText(e)); }
@@ -1324,7 +1383,7 @@ function looseHit(sentence, enPhrase){
 /* настоящие примеры из открытых источников добавляем к уже имеющимся, пока их не станет нужное число */
 function topUpExamples(c, info){
   let added=0;
-  for(const e of (info?.examples||[])){
+  for(const e of (info ? examplesFor(info,c,c.en) : [])){
     if(c.examples.length>=MIN_EX) break;
     if(e.en && !c.examples.some(y=>norm(y.en)===norm(e.en))){ c.examples.push({...e}); added++; }
   }
@@ -1349,8 +1408,9 @@ async function completeCards(cards, btn){
   const before=new Map(cards.map(c=>[c.id,snap(c)]));
   await pool(cards, 3, async c=>{
     const info=await enrichInfo(c.en);
-    if(!c.ipa && info.ipa) c.ipa=info.ipa; if(!c.pos && info.pos) c.pos=info.pos; if(!c.audio && info.audio) c.audio=info.audio;
+    if(!c.ipa && info.ipa) c.ipa=info.ipa; if(!c.audio && info.audio) c.audio=info.audio;
     topUpExamples(c, info);
+    if(!c.pos && info.pos && !info.multi) c.pos=info.pos;
     Store.saveLazy(c); n++; setBtn();
   }, ()=>impStop);
   const todo=cards.filter(c=>!c.ru || !c.ipa || c.examples.length<MIN_EX).map(c=>({c, need:Math.max(0, MIN_EX-c.examples.length)}));
@@ -1725,8 +1785,8 @@ function openEdit(id){
     const b=$("#e-fetch"), msg=$("#e-fetchMsg"); b.disabled=true; msg.textContent="Ищу…";
     const info=await enrichInfo($("#e-en").value.trim()||c.en);
     if(!$("#e-ipa").value.trim() && info.ipa) $("#e-ipa").value=info.ipa;
-    if(!$("#e-ex").value.trim() && info.examples.length){
-      const exs=info.examples.map(x=>({...x})); if(exs.some(x=>!x.ru)) await FREE.translateExamples(exs); pendEx.push(...exs);
+    if(!$("#e-ex").value.trim() && examplesFor(info,c,c.en).length){
+      const exs=examplesFor(info,c,c.en); if(exs.some(x=>!x.ru)) await FREE.translateExamples(exs); pendEx.push(...exs);
       $("#e-ex").value=exs.map(x=>x.en+(x.ru?" | "+x.ru:"")).join("\n");
     }
     pendAudio=info.audio; pendPos=info.pos;
